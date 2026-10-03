@@ -100,7 +100,7 @@ def main() -> None:
             "Date range",
             min_value=min_date,
             max_value=max_date,
-            value=(max(min_date, max_date - pd.DateOffset(years=20)), max_date),
+            value=(max(min_date, (pd.Timestamp(max_date) - pd.DateOffset(years=20)).date()), max_date),
         )
 
     view = data.loc[str(start):str(end)].copy()
