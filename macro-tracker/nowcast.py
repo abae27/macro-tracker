@@ -91,8 +91,9 @@ def process_beat_miss(actual: pd.DataFrame, nowcast: pd.DataFrame, metric: str) 
 
 
 def filter_lookback(df: pd.DataFrame, lookback: str) -> pd.DataFrame:
+    """Keep the last N full calendar years plus the current (partial) year."""
     years = LOOKBACK_YEARS[lookback]
     if years is None or df.empty:
         return df
-    cutoff = df.index.max() - pd.DateOffset(years=years)
-    return df[df.index > cutoff]
+    # Whole calendar years: 1Y = last full year plus the current year to date.
+    return df[df.index.year >= df.index.max().year - years]
