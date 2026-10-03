@@ -5,6 +5,8 @@ fetch_nowcast_data()  -> Cleveland Fed nowcast (month-over-month % change)
 process_beat_miss()   -> merge the two and classify BEAT / MISS / IN-LINE
 """
 
+import calendar
+
 import pandas as pd
 import pyfredapi as pf
 import requests
@@ -88,6 +90,40 @@ def process_beat_miss(actual: pd.DataFrame, nowcast: pd.DataFrame, metric: str) 
     df["spread"] = df["actual"] - df["nowcast"]
     df["beat_miss"] = df["spread"].map(_classify)
     return df
+
+
+def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-calendar-month averages, ranks and hit ratio over the given window.
+
+    Mirrors the nowcast_monthly.xlsx pivots: average of each month across years,
+    RANK.AVG (highest = 1, ties share the mean rank, e.g. 9.5), and
+    hit ratio = BEAT / (BEAT + MISS). IN-LINE and PENDING months are not counted
+    in the hit ratio.
+    """
+    months = list(range(1, 13))
+    by_month = df.groupby(df.index.month)
+
+    out = pd.DataFrame(index=months)
+    out["Avg Nowcast"] = by_month["nowcast"].mean()
+    out["Avg Actual"] = by_month["actual"].mean()
+    out["Beat"] = by_month["beat_miss"].apply(lambda s: int((s == "BEAT").sum()))
+    out["Miss"] = by_month["beat_miss"].apply(lambda s: int((s == "MISS").sum()))
+    out = out.reindex(months)
+    out[["Beat", "Miss"]] = out[["Beat", "Miss"]].fillna(0).astype(int)
+
+    decided = (out["Beat"] + out["Miss"]).where(lambda s: s > 0)
+    out["Hit Ratio"] = out["Beat"] / decided
+
+    def rank(col: str) -> pd.Series:
+        # Round first so float noise can't split a genuine tie.
+        return out[col].round(9).rank(ascending=False, method="average")
+
+    out.insert(1, "Nowcast Rank", rank("Avg Nowcast"))
+    out.insert(3, "Actual Rank", rank("Avg Actual"))
+    out["Hit Rank"] = rank("Hit Ratio")
+
+    out.index = pd.Index([calendar.month_abbr[m] for m in months], name="Month")
+    return out
 
 
 def filter_lookback(df: pd.DataFrame, lookback: str) -> pd.DataFrame:

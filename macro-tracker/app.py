@@ -16,6 +16,7 @@ from nowcast import (
     fetch_fred_data,
     fetch_nowcast_data,
     filter_lookback,
+    monthly_summary,
     process_beat_miss,
 )
 
@@ -163,6 +164,25 @@ def render_nowcast(api_key: str) -> None:
         "Spread) has its own color scale: light blue = lowest, yellow = middle, red = highest. "
         "Spread above zero is a BEAT, below zero a MISS. "
         "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
+    )
+
+    st.subheader(f"Monthly averages & rankings ({lookback})")
+    st.dataframe(
+        monthly_summary(df),
+        width="stretch",
+        column_config={
+            "Avg Nowcast": st.column_config.NumberColumn(format="%.3f"),
+            "Avg Actual": st.column_config.NumberColumn(format="%.3f"),
+            "Nowcast Rank": st.column_config.NumberColumn(format="%.1f"),
+            "Actual Rank": st.column_config.NumberColumn(format="%.1f"),
+            "Hit Ratio": st.column_config.NumberColumn(format="%.2f"),
+            "Hit Rank": st.column_config.NumberColumn(format="%.1f"),
+        },
+    )
+    st.caption(
+        "Averages are the mean m/m print for each calendar month across the window. "
+        "Rank 1 = highest (ties share the mean rank, e.g. 9.5). "
+        "Hit Ratio = BEAT / (BEAT + MISS); IN-LINE and pending months are excluded."
     )
 
     with st.expander("Raw data"):
