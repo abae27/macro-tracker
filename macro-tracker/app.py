@@ -33,6 +33,15 @@ PRESETS = {
 
 MONTHS = list(calendar.month_abbr)[1:]
 
+# Nowcast / Actual: lowest = light blue, middle = yellow, highest = red.
+LEVEL_COLORSCALE = [
+    [0.00, "#cfe8f7"],
+    [0.25, "#f3f0c0"],
+    [0.50, "#ffe45e"],
+    [0.75, "#fb9a4b"],
+    [1.00, "#d73027"],
+]
+
 # Heatmap rows, top to bottom. Each row gets its own color scale in every year.
 HEATMAP_ROWS = [
     ("nowcast", "Nowcast"),
@@ -65,7 +74,7 @@ def _color_axis(values: np.ndarray, is_spread: bool) -> dict:
     hi = float(finite.max()) if finite.size else 1.0
     if hi - lo < 0.02:
         hi = lo + 0.02
-    return dict(colorscale="YlOrRd", cmin=lo, cmax=hi, showscale=False)
+    return dict(colorscale=LEVEL_COLORSCALE, cmin=lo, cmax=hi, showscale=False)
 
 
 def build_year_heatmap(df: pd.DataFrame, year: int) -> go.Figure:
@@ -151,7 +160,8 @@ def render_nowcast(api_key: str) -> None:
         )
     st.caption(
         "Values are month-over-month % change. Each year and each row (Nowcast, Actual, "
-        "Spread) has its own color scale. Spread: green = BEAT, red = MISS. "
+        "Spread) has its own color scale. Nowcast/Actual: light blue = lowest, yellow = middle, "
+        "red = highest. Spread: green = BEAT, red = MISS. "
         "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
     )
 
