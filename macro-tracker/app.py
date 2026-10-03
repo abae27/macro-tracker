@@ -226,13 +226,7 @@ def _month_table(df: pd.DataFrame, lookback: str) -> tuple[pd.DataFrame, dict]:
     return view, config
 
 
-def render_oer_levels(api_key: str) -> None:
-    lookback = st.radio(
-        "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="lvl_lookback"
-    )
-    levels = _load_oer(api_key)
-    if levels is None:
-        return
+def render_oer_levels(levels: pd.DataFrame, lookback: str) -> None:
     if levels.dropna(how="all").empty:
         st.warning("FRED returned no observations for the regional OER series.")
         return
@@ -255,6 +249,7 @@ def render_oer_levels(api_key: str) -> None:
         table.to_csv(index=False).encode("utf-8"),
         file_name="oer_index_levels.csv",
         mime="text/csv",
+        key="dl_levels",
     )
 
     with st.expander("Series & weights"):
@@ -274,19 +269,12 @@ def render_oer_levels(api_key: str) -> None:
             },
         )
     st.caption(
-        "Index levels are not seasonally adjusted (CUUR series). The OER tab computes "
-        "everything from this table."
+        "Index levels are not seasonally adjusted (CUUR series). Everything below is "
+        "computed from this table."
     )
 
 
-def render_oer(api_key: str) -> None:
-    lookback = st.radio(
-        "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="oer_lookback"
-    )
-    levels = _load_oer(api_key)
-    if levels is None:
-        return
-
+def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
     calc = compute_oer(levels)
     mom, contrib_cpi, contrib_oer = calc["mom"], calc["contrib_cpi"], calc["contrib_oer"]
     complete = mom.dropna()
@@ -354,6 +342,22 @@ def render_oer(api_key: str) -> None:
         },
     )
     st.caption("Rank 1 = highest. Ties share the mean rank (e.g. 2.5).")
+
+
+def render_oer(api_key: str) -> None:
+    """Combined OER tab: index levels first, then the analysis computed from them."""
+    lookback = st.radio(
+        "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="oer_lookback"
+    )
+    levels = _load_oer(api_key)
+    if levels is None:
+        return
+
+    st.header("Index levels")
+    render_oer_levels(levels, lookback)
+    st.divider()
+    st.header("Month-over-month, contributions & rankings")
+    render_oer_analysis(levels, lookback)
 
 
 # ------------------------------------------------------------ series explorer
@@ -467,15 +471,15 @@ def main() -> None:
         )
         st.stop()
 
-    tab_cpi, tab_oer, tab_explorer = st.tabs(["US CPI", "OER", "Series Explorer"])
+    tab_cpi, tab_explorer = st.tabs(["US CPI", "Series Explorer"])
     with tab_cpi:
         tab_nowcast, tab_levels = st.tabs(["CPI Nowcast Beat/Miss", "CPI Index Level 3"])
         with tab_nowcast:
             render_nowcast(api_key)
         with tab_levels:
-            render_oer_levels(api_key)
-    with tab_oer:
-        render_oer(api_key)
+            (tab_oer,) = st.tabs(["OER"])
+            with tab_oer:
+                render_oer(api_key)
     with tab_explorer:
         render_explorer(api_key)
 
