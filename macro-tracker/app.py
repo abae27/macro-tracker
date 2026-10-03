@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pyfredapi as pf
+from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 
@@ -32,11 +33,12 @@ PRESETS = {
 
 MONTHS = list(calendar.month_abbr)[1:]
 
-HEATMAP_VIEWS = {
-    "Spread (Actual − Nowcast)": "spread",
-    "Actual": "actual",
-    "Nowcast": "nowcast",
-}
+# Heatmap rows, top to bottom. Each row gets its own color scale in every year.
+HEATMAP_ROWS = [
+    ("nowcast", "Nowcast"),
+    ("actual", "Actual"),
+    ("spread", "Spread (Actual − Nowcast)"),
+]
 
 st.set_page_config(page_title="Macro Tracker", page_icon="📈", layout="wide")
 
@@ -52,48 +54,62 @@ def get_api_key() -> str | None:
 # ---------------------------------------------------------------- nowcast tab
 
 
-def build_heatmap(df: pd.DataFrame, value_col: str, metric: str) -> go.Figure:
-    """Month (Jan–Dec) by year grid of the chosen value."""
-    d = df.assign(year=df.index.year, mon=df.index.month)
-    pivot = d.pivot_table(index="mon", columns="year", values=value_col, aggfunc="first")
-    pivot = pivot.reindex(range(1, 13))
-
-    is_spread = value_col == "spread"
+def _color_axis(values: np.ndarray, is_spread: bool) -> dict:
+    """Color scale fitted to one row of one year, so no two heatmaps share a scale."""
+    finite = values[np.isfinite(values)]
     if is_spread:
-        # Diverging scale centred on zero: green = BEAT (actual hotter), red = MISS.
-        limit = max(0.05, float(np.nanpercentile(np.abs(pivot.values), 95)))
-        scale = dict(colorscale="RdYlGn", zmin=-limit, zmax=limit, zmid=0)
-        label = "pp"
-    else:
-        scale = dict(colorscale="YlOrRd")
-        label = "% m/m"
+        # Diverging, centred on zero: green = BEAT (actual hotter), red = MISS.
+        limit = max(0.02, float(np.abs(finite).max())) if finite.size else 0.02
+        return dict(colorscale="RdYlGn", cmin=-limit, cmax=limit, cmid=0, showscale=False)
+    lo = float(finite.min()) if finite.size else 0.0
+    hi = float(finite.max()) if finite.size else 1.0
+    if hi - lo < 0.02:
+        hi = lo + 0.02
+    return dict(colorscale="YlOrRd", cmin=lo, cmax=hi, showscale=False)
 
-    fig = go.Figure(
-        go.Heatmap(
-            z=pivot.values,
-            x=[str(y) for y in pivot.columns],
-            y=MONTHS,
-            texttemplate="%{z:.2f}",
-            hoverongaps=False,
-            colorbar=dict(title=label),
-            **scale,
+
+def build_year_heatmap(df: pd.DataFrame, year: int) -> go.Figure:
+    """Jan–Dec heatmap for one calendar year: Nowcast, Actual and Spread rows,
+    each with an independent color scale."""
+    months = df[df.index.year == year].reindex(
+        pd.date_range(f"{year}-01-01", periods=12, freq="MS")
+    )
+
+    fig = make_subplots(
+        rows=len(HEATMAP_ROWS), cols=1, shared_xaxes=True, vertical_spacing=0.06
+    )
+    layout = {}
+    for i, (col, label) in enumerate(HEATMAP_ROWS, start=1):
+        values = months[col].to_numpy(dtype=float)
+        axis = "coloraxis" if i == 1 else f"coloraxis{i}"
+        fig.add_trace(
+            go.Heatmap(
+                z=[values],
+                x=MONTHS,
+                y=[label],
+                coloraxis=axis,
+                texttemplate="%{z:.2f}",
+                hoverongaps=False,
+            ),
+            row=i,
+            col=1,
         )
-    )
-    fig.update_yaxes(autorange="reversed")  # January at the top
-    fig.update_xaxes(type="category", side="top")
+        layout[axis] = _color_axis(values, is_spread=(col == "spread"))
+
     fig.update_layout(
-        title=f"{metric}: {value_col}",
-        height=520,
-        margin=dict(l=10, r=10, t=80, b=10),
+        height=300,
+        margin=dict(l=10, r=10, t=40, b=10),
+        **layout,
     )
+    fig.update_xaxes(showticklabels=False, type="category")
+    fig.update_xaxes(showticklabels=True, side="top", row=1, col=1)
     return fig
 
 
 def render_nowcast(api_key: str) -> None:
-    c1, c2, c3 = st.columns([1, 2, 2])
+    c1, c2 = st.columns([1, 3])
     metric = c1.selectbox("Metric", list(METRICS))
     lookback = c2.radio("Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True)
-    view = c3.radio("Heatmap shows", list(HEATMAP_VIEWS), horizontal=True)
 
     try:
         with st.spinner("Loading nowcasts and CPI actuals…"):
@@ -128,10 +144,15 @@ def render_nowcast(api_key: str) -> None:
         if LOOKBACK_YEARS[lookback]
         else f"Window: {df.index.min():%b %Y} – {df.index.max():%b %Y} (all data)"
     )
-    st.plotly_chart(build_heatmap(df, HEATMAP_VIEWS[view], metric), width="stretch")
+    for year in sorted(df.index.year.unique(), reverse=True):
+        st.subheader(f"{year}")
+        st.plotly_chart(
+            build_year_heatmap(df, year), width="stretch", key=f"hm_{metric}_{year}"
+        )
     st.caption(
-        "Values are month-over-month % change. BEAT = actual above nowcast; "
-        "IN-LINE = within ±0.01 pp. Pending months have a nowcast but no CPI release yet."
+        "Values are month-over-month % change. Each year and each row (Nowcast, Actual, "
+        "Spread) has its own color scale. Spread: green = BEAT, red = MISS. "
+        "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
     )
 
     with st.expander("Raw data"):
