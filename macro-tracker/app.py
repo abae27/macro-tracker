@@ -102,7 +102,8 @@ def build_year_heatmap(df: pd.DataFrame, year: int) -> go.Figure:
         layout[axis] = _color_axis(values)
 
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
+        font_color="#0a1f3d",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         height=300,
