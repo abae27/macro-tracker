@@ -467,13 +467,13 @@ def main() -> None:
         )
         st.stop()
 
-    tab_nowcast, tab_levels, tab_oer, tab_explorer = st.tabs(
-        ["CPI Nowcast Beat/Miss", "CPI Index Level 3", "OER", "Series Explorer"]
-    )
-    with tab_nowcast:
-        render_nowcast(api_key)
-    with tab_levels:
-        render_oer_levels(api_key)
+    tab_cpi, tab_oer, tab_explorer = st.tabs(["US CPI", "OER", "Series Explorer"])
+    with tab_cpi:
+        tab_nowcast, tab_levels = st.tabs(["CPI Nowcast Beat/Miss", "CPI Index Level 3"])
+        with tab_nowcast:
+            render_nowcast(api_key)
+        with tab_levels:
+            render_oer_levels(api_key)
     with tab_oer:
         render_oer(api_key)
     with tab_explorer:
