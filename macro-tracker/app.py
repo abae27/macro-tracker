@@ -163,18 +163,6 @@ def render_nowcast(api_key: str) -> None:
         if LOOKBACK_YEARS[lookback]
         else f"Window: {df.index.min():%b %Y} – {df.index.max():%b %Y} (all data)"
     )
-    for year in sorted(df.index.year.unique(), reverse=True):
-        st.subheader(f"{year}")
-        st.plotly_chart(
-            build_year_heatmap(df, year), width="stretch", key=f"hm_{metric}_{year}"
-        )
-    st.caption(
-        "Values are month-over-month % change. Each year and each row (Nowcast, Actual, "
-        "Spread) has its own color scale: light blue = lowest, yellow = middle, red = highest. "
-        "Spread above zero is a BEAT, below zero a MISS. "
-        "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
-    )
-
     st.subheader(f"Monthly averages & rankings ({lookback})")
     st.dataframe(
         monthly_summary(df),
@@ -192,6 +180,18 @@ def render_nowcast(api_key: str) -> None:
         "Averages are the mean m/m print for each calendar month across the window. "
         "Rank 1 = highest (ties share the mean rank, e.g. 9.5). "
         "Hit Ratio = BEAT / (BEAT + MISS); IN-LINE and pending months are excluded."
+    )
+
+    for year in sorted(df.index.year.unique(), reverse=True):
+        st.subheader(f"{year}")
+        st.plotly_chart(
+            build_year_heatmap(df, year), width="stretch", key=f"hm_{metric}_{year}"
+        )
+    st.caption(
+        "Values are month-over-month % change. Each year and each row (Nowcast, Actual, "
+        "Spread) has its own color scale: light blue = lowest, yellow = middle, red = highest. "
+        "Spread above zero is a BEAT, below zero a MISS. "
+        "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
     )
 
     with st.expander("Raw data"):
