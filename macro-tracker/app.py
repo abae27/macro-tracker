@@ -1,4 +1,4 @@
-﻿"""Macroeconomic data tracker built on Streamlit and the FRED API."""
+"""Macroeconomic data tracker built on Streamlit and the FRED API."""
 
 import calendar
 
@@ -33,12 +33,12 @@ PRESETS = {
 MONTHS = list(calendar.month_abbr)[1:]
 
 HEATMAP_VIEWS = {
-    "Spread (Actual âˆ’ Nowcast)": "spread",
+    "Spread (Actual − Nowcast)": "spread",
     "Actual": "actual",
     "Nowcast": "nowcast",
 }
 
-st.set_page_config(page_title="Macro Tracker", page_icon="ðŸ“ˆ", layout="wide")
+st.set_page_config(page_title="Macro Tracker", page_icon="📈", layout="wide")
 
 
 def get_api_key() -> str | None:
@@ -53,7 +53,7 @@ def get_api_key() -> str | None:
 
 
 def build_heatmap(df: pd.DataFrame, value_col: str, metric: str) -> go.Figure:
-    """Month (Janâ€“Dec) by year grid of the chosen value."""
+    """Month (Jan–Dec) by year grid of the chosen value."""
     d = df.assign(year=df.index.year, mon=df.index.month)
     pivot = d.pivot_table(index="mon", columns="year", values=value_col, aggfunc="first")
     pivot = pivot.reindex(range(1, 13))
@@ -96,7 +96,7 @@ def render_nowcast(api_key: str) -> None:
     view = c3.radio("Heatmap shows", list(HEATMAP_VIEWS), horizontal=True)
 
     try:
-        with st.spinner("Loading nowcasts and CPI actualsâ€¦"):
+        with st.spinner("Loading nowcasts and CPI actuals…"):
             nowcast = fetch_nowcast_data()
             actual = fetch_fred_data(METRICS[metric][0], api_key)
     except requests.RequestException as exc:
@@ -125,7 +125,7 @@ def render_nowcast(api_key: str) -> None:
     st.plotly_chart(build_heatmap(df, HEATMAP_VIEWS[view], metric), width="stretch")
     st.caption(
         "Values are month-over-month % change. BEAT = actual above nowcast; "
-        "IN-LINE = within Â±0.01 pp. Pending months have a nowcast but no CPI release yet."
+        "IN-LINE = within ±0.01 pp. Pending months have a nowcast but no CPI release yet."
     )
 
     with st.expander("Raw data"):
@@ -165,8 +165,8 @@ def load_metadata(series_id: str, api_key: str) -> dict:
 
 def render_explorer(api_key: str) -> None:
     c1, c2, c3 = st.columns(3)
-    choice = c1.selectbox("Indicator", [*PRESETS, "Customâ€¦"])
-    if choice == "Customâ€¦":
+    choice = c1.selectbox("Indicator", [*PRESETS, "Custom…"])
+    if choice == "Custom…":
         series_id = c2.text_input("FRED series ID", value="GDP").strip().upper()
     else:
         series_id = PRESETS[choice]
@@ -178,7 +178,7 @@ def render_explorer(api_key: str) -> None:
         return
 
     try:
-        with st.spinner("Fetching data from FREDâ€¦"):
+        with st.spinner("Fetching data from FRED…"):
             data = load_series(series_id, api_key)
             meta = load_metadata(series_id, api_key)
     except requests.HTTPError as exc:
@@ -211,7 +211,7 @@ def render_explorer(api_key: str) -> None:
 
     st.subheader(meta["title"])
     st.caption(
-        f"{meta['frequency']} Â· {meta['units']} Â· {meta['seasonal_adjustment']} Â· "
+        f"{meta['frequency']} · {meta['units']} · {meta['seasonal_adjustment']} · "
         f"Last updated {meta['last_updated'][:10]}"
     )
 
@@ -239,13 +239,13 @@ def render_explorer(api_key: str) -> None:
 
 
 def main() -> None:
-    st.title("ðŸ“ˆ Macroeconomic Data Tracker")
+    st.title("📈 Macroeconomic Data Tracker")
 
     api_key = get_api_key()
     if not api_key:
         st.error("No FRED API key found.")
         st.markdown(
-            "Add it to `.streamlit/secrets.toml` locally, or to **App settings â†’ "
+            "Add it to `.streamlit/secrets.toml` locally, or to **App settings → "
             "Secrets** on Streamlit Community Cloud:\n\n"
             '```toml\n[fred]\napi_key = "your-key-here"\n```'
         )
