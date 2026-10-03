@@ -122,6 +122,12 @@ def render_nowcast(api_key: str) -> None:
     k4.metric("Avg spread (pp)", f"{released['spread'].mean():+.3f}")
     k5.metric("Months", f"{len(released)}" + (f" (+{pending} pending)" if pending else ""))
 
+    st.caption(
+        f"Window: {df.index.min():%b %Y} – {df.index.max():%b %Y} "
+        f"({lookback} = last {LOOKBACK_YEARS[lookback]} full year(s) + current year)"
+        if LOOKBACK_YEARS[lookback]
+        else f"Window: {df.index.min():%b %Y} – {df.index.max():%b %Y} (all data)"
+    )
     st.plotly_chart(build_heatmap(df, HEATMAP_VIEWS[view], metric), width="stretch")
     st.caption(
         "Values are month-over-month % change. BEAT = actual above nowcast; "
