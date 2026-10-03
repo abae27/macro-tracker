@@ -88,6 +88,57 @@ def averages_table(mom: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def estimate_next(levels: pd.DataFrame, mom: pd.DataFrame, years: int = 5):
+    """Statistical estimate of the next monthly OER print for each region.
+
+    Est. MoM = trailing 6-month average MoM (run-rate)
+             + seasonal adjustment for the target calendar month.
+
+    The seasonal adjustment is how much that calendar month has typically run above
+    or below its own year's average, over the last `years` complete calendar years
+    (needs at least 3, otherwise it is 0). The series are not seasonally adjusted,
+    so this keeps e.g. a typically soft January from being treated as a trend change.
+    """
+    regions = list(REGIONS)
+    m = mom[regions].dropna()
+    if len(m) < 6:
+        return None, pd.DataFrame()
+
+    latest = m.index[-1]
+    target = latest + pd.DateOffset(months=1)
+    run_rate = m.tail(6).mean()
+
+    full_years = m.groupby(m.index.year).filter(lambda g: len(g) == 12)
+    dev = full_years - full_years.groupby(full_years.index.year).transform("mean")
+    same = dev[dev.index.month == target.month].tail(years)
+    seasonal = same.mean() if len(same) >= 3 else pd.Series(0.0, index=regions)
+
+    est = run_rate + seasonal
+    cpi_w = pd.Series({r: REGIONS[r]["cpi_weight"] / 100 for r in regions})
+    oer_s = pd.Series({r: REGIONS[r]["oer_share"] / 100 for r in regions})
+
+    out = pd.DataFrame(
+        {
+            "6M Run-rate": run_rate,
+            "Seasonal Adj.": seasonal,
+            "Est. MoM %": est,
+            "Last Level": levels.loc[latest, regions],
+            "Est. Level": levels.loc[latest, regions] * (1 + est / 100),
+            "Est. Contribution to CPI (pp)": est * cpi_w,
+        }
+    )
+    out.loc[NATIONAL] = [
+        (run_rate * oer_s).sum(),
+        (seasonal * oer_s).sum(),
+        (est * oer_s).sum(),
+        float("nan"),
+        float("nan"),
+        (est * cpi_w).sum(),
+    ]
+    out.index.name = "Region"
+    return target, out
+
+
 def rankings_table(mom: pd.DataFrame, contrib_cpi: pd.DataFrame, contrib_oer: pd.DataFrame):
     """Regions ranked (1 = highest, ties share the mean rank) for the latest month."""
     regions = list(REGIONS)

@@ -15,6 +15,7 @@ from oer import (
     REGIONS,
     averages_table,
     compute_oer,
+    estimate_next,
     fetch_oer_levels,
     rankings_table,
 )
@@ -353,6 +354,20 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
     k2.metric("Contribution to headline CPI", f"{contrib_cpi.loc[latest, 'Total']:.3f} pp")
     top = mom.loc[latest, list(REGIONS)].idxmax()
     k3.metric("Hottest region", top, f"{mom.loc[latest, top]:.3f}%")
+
+    target, est = estimate_next(levels, mom)
+    if target is not None:
+        st.subheader(f"Estimated next print ({target:%b %Y})")
+        st.dataframe(
+            est,
+            width="stretch",
+            column_config={c: st.column_config.NumberColumn(format="%.3f") for c in est.columns},
+        )
+        st.caption(
+            "A statistical estimate, not the BLS release: trailing 6-month average MoM plus "
+            "the typical seasonal swing for that calendar month (last 5 complete years). "
+            "National OER is the share-weighted sum of the regions."
+        )
 
     st.line_chart(filter_lookback(mom, lookback))
 
