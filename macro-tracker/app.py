@@ -355,7 +355,7 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
     top = mom.loc[latest, list(REGIONS)].idxmax()
     k3.metric("Hottest region", top, f"{mom.loc[latest, top]:.3f}%")
 
-    target, est = estimate_next(levels, mom)
+    target, est, info = estimate_next(levels, mom)
     if target is not None:
         st.subheader(f"Estimated next print ({target:%b %Y})")
         st.dataframe(
@@ -364,9 +364,14 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
             column_config={c: st.column_config.NumberColumn(format="%.3f") for c in est.columns},
         )
         st.caption(
-            "A statistical estimate, not the BLS release: trailing 6-month average MoM plus "
-            "the typical seasonal swing for that calendar month (last 5 complete years). "
-            "National OER is the share-weighted sum of the regions."
+            f"Est. MoM = 12-month trend + β × the {info['source']:%b %Y} surprise (that month's "
+            f"MoM vs. the trend before it). OER is priced in six-month panels, so a hot month "
+            f"tends to be followed by a cooler one six months later. "
+            f"β = {info['beta']:+.2f} (t = {info['tstat']:.1f}), fit across all four regions. "
+            f"Backtest, last {info['backtest_months']} months with β refit each month: average "
+            f"error {info['mae_model']:.3f} pp vs {info['mae_trend']:.3f} pp for the 12-month "
+            f"trend alone. National Last/Est. Level is the OER-share-weighted blend of the "
+            f"regional levels. A statistical estimate, not the BLS release."
         )
 
     st.line_chart(filter_lookback(mom, lookback))

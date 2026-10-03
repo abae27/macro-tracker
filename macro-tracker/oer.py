@@ -3,6 +3,7 @@
 fetch_oer_levels()  -> regional OER index levels from FRED (feeds the "CPI Index Level 3" tab)
 compute_oer()       -> MoM % and weighted contributions, all derived from those levels
 averages_table()    -> trailing 3/6/12-month average MoM and annualized rates
+estimate_next()     -> next-print estimate using the six-month survey panel pattern
 rankings_table()    -> regions ranked by latest MoM and by contribution
 """
 
@@ -88,55 +89,104 @@ def averages_table(mom: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def estimate_next(levels: pd.DataFrame, mom: pd.DataFrame, years: int = 5):
-    """Statistical estimate of the next monthly OER print for each region.
+def _fit_beta(x: pd.Series, y: pd.Series) -> tuple[float, float]:
+    """Through-the-origin OLS slope of y on x, with its t-statistic."""
+    sxx = float((x * x).sum())
+    if len(x) < 24 or sxx == 0:
+        return 0.0, float("nan")
+    beta = float((x * y).sum() / sxx)
+    resid = y - beta * x
+    se = (float((resid**2).sum()) / (len(x) - 1) / sxx) ** 0.5
+    return beta, (beta / se if se else float("nan"))
 
-    Est. MoM = trailing 6-month average MoM (run-rate)
-             + seasonal adjustment for the target calendar month.
 
-    The seasonal adjustment is how much that calendar month has typically run above
-    or below its own year's average, over the last `years` complete calendar years
-    (needs at least 3, otherwise it is 0). The series are not seasonally adjusted,
-    so this keeps e.g. a typically soft January from being treated as a trend change.
+def estimate_next(levels: pd.DataFrame, mom: pd.DataFrame, backtest_months: int = 60):
+    """Estimate the next monthly OER print for each region.
+
+    BLS prices each rental unit once every six months, and rents mostly reset once a
+    year, so a month that runs hot tends to be followed six months later by a
+    cooler one. The model captures that directly:
+
+        Est. MoM = 12M trend  +  beta x (surprise six months earlier)
+
+    * 12M trend  = average MoM of the last 12 months (a full year, so no seasonal
+      bias; deliberately not the 6-month average).
+    * surprise   = MoM of the month six back minus the 12-month trend that stood
+      before it.
+    * beta       = pooled slope of surprise on the surprise six months earlier,
+      fit across all four regions. It is estimated, not assumed: a negative beta
+      means "hot then cold".
+
+    Returns (target month, table, info) where `info` carries beta, its t-stat,
+    the source month and a backtest of the model against trend alone.
     """
     regions = list(REGIONS)
     m = mom[regions].dropna()
-    if len(m) < 6:
-        return None, pd.DataFrame()
+    if len(m) < 12 + 6 + 12:
+        return None, pd.DataFrame(), {}
 
     latest = m.index[-1]
     target = latest + pd.DateOffset(months=1)
-    run_rate = m.tail(6).mean()
+    source = target - pd.DateOffset(months=6)
 
-    full_years = m.groupby(m.index.year).filter(lambda g: len(g) == 12)
-    dev = full_years - full_years.groupby(full_years.index.year).transform("mean")
-    same = dev[dev.index.month == target.month].tail(years)
-    seasonal = same.mean() if len(same) >= 3 else pd.Series(0.0, index=regions)
+    trend_hist = m.rolling(12).mean().shift(1)  # what was known before each month
+    dev = m - trend_hist
+    pairs = pd.concat(
+        [pd.DataFrame({"x": dev[r].shift(6), "y": dev[r]}).dropna() for r in regions]
+    )
+    beta, tstat = _fit_beta(pairs["x"], pairs["y"])
 
-    est = run_rate + seasonal
+    # Backtest: refit beta using only data before each month, then score the call.
+    model_err, trend_err = [], []
+    tested = sorted(pairs.index.unique())[-backtest_months:]
+    for t in tested:
+        train, test = pairs[pairs.index < t], pairs[pairs.index == t]
+        b, _ = _fit_beta(train["x"], train["y"])
+        model_err += list((test["y"] - b * test["x"]).abs())
+        trend_err += list(test["y"].abs())
+    info = {
+        "beta": beta,
+        "tstat": tstat,
+        "source": source,
+        "backtest_months": len(tested),
+        "mae_model": float(pd.Series(model_err).mean()) if model_err else float("nan"),
+        "mae_trend": float(pd.Series(trend_err).mean()) if trend_err else float("nan"),
+    }
+
+    trend = m.tail(12).mean()
+    surprise = dev.loc[source] if source in dev.index else pd.Series(float("nan"), index=regions)
+    surprise = surprise.fillna(0.0)
+    adj = beta * surprise
+    est = trend + adj
+
     cpi_w = pd.Series({r: REGIONS[r]["cpi_weight"] / 100 for r in regions})
     oer_s = pd.Series({r: REGIONS[r]["oer_share"] / 100 for r in regions})
+    last_level = levels.loc[latest, regions]
+    est_level = last_level * (1 + est / 100)
 
     out = pd.DataFrame(
         {
-            "6M Run-rate": run_rate,
-            "Seasonal Adj.": seasonal,
+            "12M Trend": trend,
+            "Surprise 6M Ago": surprise,
+            "Adj. (β × surprise)": adj,
             "Est. MoM %": est,
-            "Last Level": levels.loc[latest, regions],
-            "Est. Level": levels.loc[latest, regions] * (1 + est / 100),
+            "Last Level": last_level,
+            "Est. Level": est_level,
             "Est. Contribution to CPI (pp)": est * cpi_w,
         }
     )
+    # National = share-weighted blend of the regions, levels included.
     out.loc[NATIONAL] = [
-        (run_rate * oer_s).sum(),
-        (seasonal * oer_s).sum(),
+        (trend * oer_s).sum(),
+        (surprise * oer_s).sum(),
+        (adj * oer_s).sum(),
         (est * oer_s).sum(),
-        float("nan"),
-        float("nan"),
+        (last_level * oer_s).sum(),
+        (est_level * oer_s).sum(),
         (est * cpi_w).sum(),
     ]
     out.index.name = "Region"
-    return target, out
+    return target, out, info
 
 
 def rankings_table(mom: pd.DataFrame, contrib_cpi: pd.DataFrame, contrib_oer: pd.DataFrame):
