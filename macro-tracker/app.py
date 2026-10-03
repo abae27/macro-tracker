@@ -12,11 +12,15 @@ import streamlit as st
 
 from oer import (
     NATIONAL,
+    NATIONAL_SERIES,
     REGIONS,
+    TICKER_SETS,
     averages_table,
     compute_oer,
     estimate_next,
+    fetch_national_level,
     fetch_oer_levels,
+    series_id,
     rankings_table,
 )
 from nowcast import (
@@ -274,12 +278,15 @@ def build_region_heatmap(series: pd.Series) -> go.Figure:
     return fig
 
 
-def _load_oer(api_key: str):
+def _load_oer(api_key: str, suffix: str = ""):
     try:
         with st.spinner("Loading regional OER from FRED…"):
-            return fetch_oer_levels(api_key)
+            return fetch_oer_levels(api_key, suffix)
     except Exception as exc:  # pyfredapi raises its own error types
-        st.error(f"Could not load regional OER data: {type(exc).__name__}")
+        st.error(
+            f"Could not load regional OER data ({type(exc).__name__}). "
+            "If you switched to the SEHC01 tickers, one of them may not exist on FRED."
+        )
         return None
 
 
@@ -292,7 +299,9 @@ def _month_table(df: pd.DataFrame, lookback: str) -> tuple[pd.DataFrame, dict]:
     return view, config
 
 
-def render_oer_levels(levels: pd.DataFrame, lookback: str) -> None:
+def render_oer_levels(
+    levels: pd.DataFrame, lookback: str, suffix: str = "", national: pd.Series | None = None
+) -> None:
     if levels.dropna(how="all").empty:
         st.warning("FRED returned no observations for the regional OER series.")
         return
@@ -318,11 +327,28 @@ def render_oer_levels(levels: pd.DataFrame, lookback: str) -> None:
         key="dl_levels",
     )
 
+    if national is not None and not national.empty:
+        blend = float((latest[list(REGIONS)] * pd.Series(
+            {r: m["oer_share"] / 100 for r, m in REGIONS.items()}
+        )).sum())
+        st.caption(
+            f"Check: published national OER ({NATIONAL_SERIES}{suffix}) = "
+            f"{national.iloc[-1]:,.3f} ({national.index[-1]:%b %Y}); "
+            f"share-weighted blend of the four regional levels = {blend:,.3f}. "
+            "Regional indexes sit on different bases, so the blend need not equal the "
+            "published national level."
+        )
+
     with st.expander("Series & weights"):
         st.dataframe(
             pd.DataFrame(
                 {
-                    "FRED series": [m["series"] for m in REGIONS.values()],
+                    "FRED series": [series_id(r, suffix) for r in REGIONS],
+                    "Latest level": [latest[r] for r in REGIONS],
+                    "Latest month": [
+                        f"{levels[r].dropna().index[-1]:%b %Y}" if levels[r].notna().any() else ""
+                        for r in REGIONS
+                    ],
                     "Weight in headline CPI": [m["cpi_weight"] for m in REGIONS.values()],
                     "Share of national OER (%)": [m["oer_share"] for m in REGIONS.values()],
                 },
@@ -330,6 +356,7 @@ def render_oer_levels(levels: pd.DataFrame, lookback: str) -> None:
             ),
             width="stretch",
             column_config={
+                "Latest level": st.column_config.NumberColumn(format="%.3f"),
                 "Weight in headline CPI": st.column_config.NumberColumn(format="%.3f"),
                 "Share of national OER (%)": st.column_config.NumberColumn(format="%.2f"),
             },
@@ -445,18 +472,30 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
 
 def render_oer(api_key: str) -> None:
     """Combined OER tab: index levels first, then the analysis computed from them."""
-    lookback = st.radio(
+    c1, c2 = st.columns([1, 3])
+    ticker_set = c1.selectbox(
+        "Tickers",
+        list(TICKER_SETS),
+        key="oer_tickers",
+        help="SEHC = CUUR0x00SEHC (OER of residences); SEHC01 = CUUR0x00SEHC01 (OER of primary residence).",
+    )
+    lookback = c2.radio(
         "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="oer_lookback"
     )
-    levels = _load_oer(api_key)
+    suffix = TICKER_SETS[ticker_set]
+    levels = _load_oer(api_key, suffix)
     if levels is None:
         return
+    try:
+        national = fetch_national_level(api_key, suffix)
+    except Exception:
+        national = None  # cross-check is optional
 
     st.header("Month-over-month, contributions & rankings")
     render_oer_analysis(levels, lookback)
     st.divider()
     st.header("Index levels")
-    render_oer_levels(levels, lookback)
+    render_oer_levels(levels, lookback, suffix, national)
 
 
 # ------------------------------------------------------------ series explorer

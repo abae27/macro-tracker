@@ -26,24 +26,43 @@ NATIONAL = "National OER"
 WINDOWS = (3, 6, 12)
 
 
+NATIONAL_SERIES = "CUUR0000SEHC"  # published US city average OER, for cross-checking
+
+# BLS publishes OER of residences (SEHC) and OER of primary residence (SEHC01).
+TICKER_SETS = {"SEHC": "", "SEHC01": "01"}
+
+
+def series_id(region: str, suffix: str = "") -> str:
+    return REGIONS[region]["series"] + suffix
+
+
+def _month_series(series_id_: str, api_key: str) -> pd.Series:
+    raw = pf.get_series(series_id=series_id_, api_key=api_key)
+    s = pd.to_numeric(
+        raw.assign(date=pd.to_datetime(raw["date"])).set_index("date")["value"],
+        errors="coerce",
+    ).dropna()
+    s.index = s.index.to_period("M").to_timestamp()
+    return s
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_oer_levels(api_key: str) -> pd.DataFrame:
+def fetch_oer_levels(api_key: str, suffix: str = "") -> pd.DataFrame:
     """Regional OER index levels, one column per region, indexed by month start.
 
+    `suffix` selects the ticker family ("" = ...SEHC, "01" = ...SEHC01).
     Starts one month before START so the first MoM change is available.
     """
-    cols = {}
-    for region, meta in REGIONS.items():
-        raw = pf.get_series(series_id=meta["series"], api_key=api_key)
-        s = pd.to_numeric(
-            raw.assign(date=pd.to_datetime(raw["date"])).set_index("date")["value"],
-            errors="coerce",
-        ).dropna()
-        s.index = s.index.to_period("M").to_timestamp()
-        cols[region] = s
+    cols = {region: _month_series(series_id(region, suffix), api_key) for region in REGIONS}
     levels = pd.DataFrame(cols).sort_index()
     levels.index.name = "month"
     return levels.loc[START - pd.DateOffset(months=1):]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_national_level(api_key: str, suffix: str = "") -> pd.Series:
+    """Published national OER index, to cross-check any regional blend against."""
+    return _month_series(NATIONAL_SERIES + suffix, api_key)
 
 
 def compute_oer(levels: pd.DataFrame) -> dict[str, pd.DataFrame]:
