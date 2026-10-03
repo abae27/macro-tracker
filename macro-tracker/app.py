@@ -208,6 +208,36 @@ def render_nowcast(api_key: str) -> None:
 # ------------------------------------------------------------------ OER tabs
 
 
+def build_region_heatmap(series: pd.Series) -> go.Figure:
+    """Months down the left, years across the top, one region's MoM prints."""
+    d = pd.DataFrame({"v": series, "year": series.index.year, "mon": series.index.month})
+    pivot = d.pivot_table(index="mon", columns="year", values="v", aggfunc="first")
+    pivot = pivot.reindex(range(1, 13))
+
+    fig = go.Figure(
+        go.Heatmap(
+            z=pivot.values,
+            x=[str(y) for y in pivot.columns],
+            y=MONTHS,
+            coloraxis="coloraxis",
+            texttemplate="%{z:.2f}",
+            hoverongaps=False,
+        )
+    )
+    fig.update_layout(
+        template="plotly_white",
+        font_color="#0a1f3d",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        coloraxis=_color_axis(pivot.to_numpy(dtype=float)),
+        height=430,
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
+    fig.update_yaxes(autorange="reversed")  # January at the top
+    fig.update_xaxes(type="category", side="top")
+    return fig
+
+
 def _load_oer(api_key: str):
     try:
         with st.spinner("Loading regional OER from FRED…"):
@@ -313,6 +343,20 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
         "MoM = % change in the index level. Contribution to headline CPI = MoM × region's "
         "CPI weight ÷ 100. Contribution to national OER = MoM × region's share of OER ÷ 100, "
         "and the shares sum to 100%, so those contributions add up to the National OER MoM."
+    )
+
+    st.subheader("Monthly prints by region (MoM %)")
+    heat = filter_lookback(mom, lookback)
+    left, right = st.columns(2)
+    for i, region in enumerate(REGIONS):
+        with (left if i % 2 == 0 else right):
+            st.markdown(f"**{region}**")
+            st.plotly_chart(
+                build_region_heatmap(heat[region]), width="stretch", key=f"oer_hm_{region}"
+            )
+    st.caption(
+        "Month-over-month % change in each region's OER index. Each region has its own "
+        "color scale: light blue = lowest, yellow = middle, red = highest."
     )
 
     st.subheader("Trailing averages")
