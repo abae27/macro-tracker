@@ -63,13 +63,9 @@ def get_api_key() -> str | None:
 # ---------------------------------------------------------------- nowcast tab
 
 
-def _color_axis(values: np.ndarray, is_spread: bool) -> dict:
-    """Color scale fitted to one row of one year, so no two heatmaps share a scale."""
+def _color_axis(values: np.ndarray) -> dict:
+    """Blue-yellow-red scale fitted to one row of one year, so no two heatmaps share a scale."""
     finite = values[np.isfinite(values)]
-    if is_spread:
-        # Diverging, centred on zero: green = BEAT (actual hotter), red = MISS.
-        limit = max(0.02, float(np.abs(finite).max())) if finite.size else 0.02
-        return dict(colorscale="RdYlGn", cmin=-limit, cmax=limit, cmid=0, showscale=False)
     lo = float(finite.min()) if finite.size else 0.0
     hi = float(finite.max()) if finite.size else 1.0
     if hi - lo < 0.02:
@@ -103,9 +99,12 @@ def build_year_heatmap(df: pd.DataFrame, year: int) -> go.Figure:
             row=i,
             col=1,
         )
-        layout[axis] = _color_axis(values, is_spread=(col == "spread"))
+        layout[axis] = _color_axis(values)
 
     fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         height=300,
         margin=dict(l=10, r=10, t=40, b=10),
         **layout,
@@ -160,8 +159,8 @@ def render_nowcast(api_key: str) -> None:
         )
     st.caption(
         "Values are month-over-month % change. Each year and each row (Nowcast, Actual, "
-        "Spread) has its own color scale. Nowcast/Actual: light blue = lowest, yellow = middle, "
-        "red = highest. Spread: green = BEAT, red = MISS. "
+        "Spread) has its own color scale: light blue = lowest, yellow = middle, red = highest. "
+        "Spread above zero is a BEAT, below zero a MISS. "
         "IN-LINE = within ±0.01 pp. Blank cells have no nowcast or no CPI release yet."
     )
 
