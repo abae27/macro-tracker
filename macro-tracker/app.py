@@ -353,11 +353,11 @@ def render_oer(api_key: str) -> None:
     if levels is None:
         return
 
-    st.header("Index levels")
-    render_oer_levels(levels, lookback)
-    st.divider()
     st.header("Month-over-month, contributions & rankings")
     render_oer_analysis(levels, lookback)
+    st.divider()
+    st.header("Index levels")
+    render_oer_levels(levels, lookback)
 
 
 # ------------------------------------------------------------ series explorer
