@@ -209,29 +209,64 @@ def render_nowcast(api_key: str) -> None:
 
 
 def build_region_heatmap(series: pd.Series) -> go.Figure:
-    """Months down the left, years across the top, one region's MoM prints."""
+    """One region's MoM prints: months down the left, one column per calendar year
+    (each year colored on its own scale), then Avg and Rank columns on the right.
+
+    Rank 1 = highest monthly average (ties share the mean rank, e.g. 9.5).
+    """
     d = pd.DataFrame({"v": series, "year": series.index.year, "mon": series.index.month})
     pivot = d.pivot_table(index="mon", columns="year", values="v", aggfunc="first")
     pivot = pivot.reindex(range(1, 13))
 
-    fig = go.Figure(
-        go.Heatmap(
-            z=pivot.values,
-            x=[str(y) for y in pivot.columns],
-            y=MONTHS,
-            coloraxis="coloraxis",
-            texttemplate="%{z:.2f}",
-            hoverongaps=False,
-        )
+    avg = pivot.mean(axis=1)  # NaN-skipping mean across the years shown
+    rank = avg.round(9).rank(ascending=False, method="average")
+
+    # (header, values, text format, color axis)
+    columns = [
+        (str(y), pivot[y].to_numpy(dtype=float), "%{z:.2f}", _color_axis(pivot[y].to_numpy(dtype=float)))
+        for y in pivot.columns
+    ]
+    columns.append(("Avg", avg.to_numpy(dtype=float), "%{z:.3f}", _color_axis(avg.to_numpy(dtype=float))))
+    # Reversed scale so rank 1 (highest) is red, matching "highest = red".
+    rank_axis = dict(
+        colorscale=[[1 - pos, color] for pos, color in LEVEL_COLORSCALE][::-1],
+        cmin=1,
+        cmax=12,
+        showscale=False,
     )
+    columns.append(("Rank", rank.to_numpy(dtype=float), "%{z:.1f}", rank_axis))
+
+    fig = make_subplots(
+        rows=1,
+        cols=len(columns),
+        shared_yaxes=True,
+        horizontal_spacing=0.006,
+    )
+    layout = {}
+    for i, (header, values, fmt, axis_cfg) in enumerate(columns, start=1):
+        axis = "coloraxis" if i == 1 else f"coloraxis{i}"
+        fig.add_trace(
+            go.Heatmap(
+                z=values.reshape(-1, 1),
+                x=[header],
+                y=MONTHS,
+                coloraxis=axis,
+                texttemplate=fmt,
+                hoverongaps=False,
+            ),
+            row=1,
+            col=i,
+        )
+        layout[axis] = axis_cfg
+
     fig.update_layout(
         template="plotly_white",
         font_color="#0a1f3d",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        coloraxis=_color_axis(pivot.to_numpy(dtype=float)),
-        height=430,
+        height=440,
         margin=dict(l=10, r=10, t=40, b=10),
+        **layout,
     )
     fig.update_yaxes(autorange="reversed")  # January at the top
     fig.update_xaxes(type="category", side="top")
@@ -347,16 +382,16 @@ def render_oer_analysis(levels: pd.DataFrame, lookback: str) -> None:
 
     st.subheader("Monthly prints by region (MoM %)")
     heat = filter_lookback(mom, lookback)
-    left, right = st.columns(2)
-    for i, region in enumerate(REGIONS):
-        with (left if i % 2 == 0 else right):
-            st.markdown(f"**{region}**")
-            st.plotly_chart(
-                build_region_heatmap(heat[region]), width="stretch", key=f"oer_hm_{region}"
-            )
+    for region in REGIONS:
+        st.markdown(f"**{region}**")
+        st.plotly_chart(
+            build_region_heatmap(heat[region]), width="stretch", key=f"oer_hm_{region}"
+        )
     st.caption(
-        "Month-over-month % change in each region's OER index. Each region has its own "
-        "color scale: light blue = lowest, yellow = middle, red = highest."
+        "Month-over-month % change in each region's OER index. Every year column, the Avg "
+        "column and the Rank column has its own color scale: light blue = lowest, yellow = "
+        "middle, red = highest. Avg is the mean of that month across the years shown; "
+        "Rank 1 = highest average (ties share the mean rank, e.g. 9.5)."
     )
 
     st.subheader("Trailing averages")
