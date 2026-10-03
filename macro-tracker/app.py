@@ -10,6 +10,14 @@ from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 
+from oer import (
+    NATIONAL,
+    REGIONS,
+    averages_table,
+    compute_oer,
+    fetch_oer_levels,
+    rankings_table,
+)
 from nowcast import (
     LOOKBACK_YEARS,
     METRICS,
@@ -197,6 +205,157 @@ def render_nowcast(api_key: str) -> None:
         )
 
 
+# ------------------------------------------------------------------ OER tabs
+
+
+def _load_oer(api_key: str):
+    try:
+        with st.spinner("Loading regional OER from FRED…"):
+            return fetch_oer_levels(api_key)
+    except Exception as exc:  # pyfredapi raises its own error types
+        st.error(f"Could not load regional OER data: {type(exc).__name__}")
+        return None
+
+
+def _month_table(df: pd.DataFrame, lookback: str) -> tuple[pd.DataFrame, dict]:
+    """Newest-first table with YYYY-MM dates, same as the nowcast raw-data table."""
+    view = filter_lookback(df, lookback).sort_index(ascending=False)
+    view = view.rename_axis("month").reset_index()
+    view["month"] = view["month"].dt.strftime("%Y-%m")
+    config = {c: st.column_config.NumberColumn(format="%.3f") for c in df.columns}
+    return view, config
+
+
+def render_oer_levels(api_key: str) -> None:
+    lookback = st.radio(
+        "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="lvl_lookback"
+    )
+    levels = _load_oer(api_key)
+    if levels is None:
+        return
+    if levels.dropna(how="all").empty:
+        st.warning("FRED returned no observations for the regional OER series.")
+        return
+
+    latest = levels.dropna(how="all").iloc[-1]
+    prev = levels.dropna(how="all").iloc[-2] if len(levels.dropna(how="all")) > 1 else None
+    st.caption(f"Latest observation: {levels.dropna(how='all').index[-1]:%b %Y}")
+    cols = st.columns(len(REGIONS))
+    for col, region in zip(cols, REGIONS):
+        delta = None if prev is None else f"{latest[region] - prev[region]:+.3f}"
+        col.metric(region, f"{latest[region]:,.3f}", delta)
+
+    view = filter_lookback(levels, lookback)
+    st.line_chart(view)
+
+    table, config = _month_table(levels, lookback)
+    st.dataframe(table, width="stretch", hide_index=True, column_config=config)
+    st.download_button(
+        "Download CSV",
+        table.to_csv(index=False).encode("utf-8"),
+        file_name="oer_index_levels.csv",
+        mime="text/csv",
+    )
+
+    with st.expander("Series & weights"):
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "FRED series": [m["series"] for m in REGIONS.values()],
+                    "Weight in headline CPI": [m["cpi_weight"] for m in REGIONS.values()],
+                    "Share of national OER (%)": [m["oer_share"] for m in REGIONS.values()],
+                },
+                index=pd.Index(list(REGIONS), name="Region"),
+            ),
+            width="stretch",
+            column_config={
+                "Weight in headline CPI": st.column_config.NumberColumn(format="%.3f"),
+                "Share of national OER (%)": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+    st.caption(
+        "Index levels are not seasonally adjusted (CUUR series). The OER tab computes "
+        "everything from this table."
+    )
+
+
+def render_oer(api_key: str) -> None:
+    lookback = st.radio(
+        "Lookback", list(LOOKBACK_YEARS), index=4, horizontal=True, key="oer_lookback"
+    )
+    levels = _load_oer(api_key)
+    if levels is None:
+        return
+
+    calc = compute_oer(levels)
+    mom, contrib_cpi, contrib_oer = calc["mom"], calc["contrib_cpi"], calc["contrib_oer"]
+    complete = mom.dropna()
+    if complete.empty:
+        st.warning("Not enough data to compute month-over-month changes.")
+        return
+    latest = complete.index[-1]
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric(f"National OER MoM ({latest:%b %Y})", f"{mom.loc[latest, NATIONAL]:.3f}%")
+    k2.metric("Contribution to headline CPI", f"{contrib_cpi.loc[latest, 'Total']:.3f} pp")
+    top = mom.loc[latest, list(REGIONS)].idxmax()
+    k3.metric("Hottest region", top, f"{mom.loc[latest, top]:.3f}%")
+
+    st.line_chart(filter_lookback(mom, lookback))
+
+    t_mom, t_cpi, t_oer = st.tabs(
+        ["MoM %", "Contribution to headline CPI (pp)", "Contribution to national OER (pp)"]
+    )
+    for tab, frame, name in (
+        (t_mom, mom, "mom"),
+        (t_cpi, contrib_cpi, "contribution_to_cpi"),
+        (t_oer, contrib_oer, "contribution_to_oer"),
+    ):
+        with tab:
+            table, config = _month_table(frame, lookback)
+            st.dataframe(table, width="stretch", hide_index=True, column_config=config)
+            st.download_button(
+                "Download CSV",
+                table.to_csv(index=False).encode("utf-8"),
+                file_name=f"oer_{name}.csv",
+                mime="text/csv",
+                key=f"dl_{name}",
+            )
+    st.caption(
+        "MoM = % change in the index level. Contribution to headline CPI = MoM × region's "
+        "CPI weight ÷ 100. Contribution to national OER = MoM × region's share of OER ÷ 100, "
+        "and the shares sum to 100%, so those contributions add up to the National OER MoM."
+    )
+
+    st.subheader("Trailing averages")
+    avg = averages_table(mom)
+    st.dataframe(
+        avg,
+        width="stretch",
+        column_config={c: st.column_config.NumberColumn(format="%.3f") for c in avg.columns},
+    )
+    st.caption(
+        "Average MoM is the simple mean of the last N monthly changes; Annualized compounds "
+        "them to a yearly rate. Based on the latest data, regardless of the lookback above."
+    )
+
+    st.subheader(f"Regional rankings ({latest:%b %Y})")
+    _, ranked = rankings_table(mom, contrib_cpi, contrib_oer)
+    st.dataframe(
+        ranked,
+        width="stretch",
+        column_config={
+            "MoM %": st.column_config.NumberColumn(format="%.3f"),
+            "Contribution to CPI (pp)": st.column_config.NumberColumn(format="%.3f"),
+            "Contribution to OER (pp)": st.column_config.NumberColumn(format="%.3f"),
+            "MoM Rank": st.column_config.NumberColumn(format="%.1f"),
+            "CPI Contribution Rank": st.column_config.NumberColumn(format="%.1f"),
+            "OER Contribution Rank": st.column_config.NumberColumn(format="%.1f"),
+        },
+    )
+    st.caption("Rank 1 = highest. Ties share the mean rank (e.g. 2.5).")
+
+
 # ------------------------------------------------------------ series explorer
 
 
@@ -308,9 +467,15 @@ def main() -> None:
         )
         st.stop()
 
-    tab_nowcast, tab_explorer = st.tabs(["CPI Nowcast Beat/Miss", "Series Explorer"])
+    tab_nowcast, tab_levels, tab_oer, tab_explorer = st.tabs(
+        ["CPI Nowcast Beat/Miss", "CPI Index Level 3", "OER", "Series Explorer"]
+    )
     with tab_nowcast:
         render_nowcast(api_key)
+    with tab_levels:
+        render_oer_levels(api_key)
+    with tab_oer:
+        render_oer(api_key)
     with tab_explorer:
         render_explorer(api_key)
 
