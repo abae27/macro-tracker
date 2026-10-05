@@ -10,6 +10,7 @@ from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 
+from yield_curve import render_yield_curve
 from oer import (
     NATIONAL,
     NATIONAL_SERIES,
@@ -609,7 +610,7 @@ def main() -> None:
         )
         st.stop()
 
-    tab_cpi, tab_explorer = st.tabs(["US CPI", "Series Explorer"])
+    tab_cpi, tab_curve, tab_explorer = st.tabs(["US CPI", "Yield Curve", "Series Explorer"])
     with tab_cpi:
         tab_nowcast, tab_levels = st.tabs(["CPI Nowcast Beat/Miss", "CPI Index Level 3"])
         with tab_nowcast:
@@ -618,6 +619,8 @@ def main() -> None:
             (tab_oer,) = st.tabs(["OER"])
             with tab_oer:
                 render_oer(api_key)
+    with tab_curve:
+        render_yield_curve(api_key)
     with tab_explorer:
         render_explorer(api_key)
 
