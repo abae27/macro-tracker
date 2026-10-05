@@ -393,6 +393,68 @@ def macd(
     return out.reindex(series.index)
 
 
+PIVOT_WINDOW = 5  # bars each side that a swing high/low must dominate
+DIVERGENCE_MIN_GAP = 5  # trading days between the two swings being compared
+DIVERGENCE_MAX_GAP = 60
+
+
+def find_pivots(series: pd.Series, k: int = PIVOT_WINDOW) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
+    """Swing highs and lows: a bar that is the extreme of the k bars on each side of it.
+
+    A pivot needs k later bars to be confirmed, so the most recent k observations can
+    never be a pivot (no lookahead). Flat tops/bottoms keep only the first bar.
+    """
+    s = series.dropna()
+    width = 2 * k + 1
+    top = s.rolling(width, center=True, min_periods=width).max()
+    bottom = s.rolling(width, center=True, min_periods=width).min()
+
+    def first_of_each_cluster(mask: pd.Series) -> pd.DatetimeIndex:
+        keep, last = [], -(10**9)
+        for pos, flag in enumerate(mask.to_numpy()):
+            if flag and pos - last > k:
+                keep.append(pos)
+                last = pos
+        return s.index[keep]
+
+    return first_of_each_cluster(s == top), first_of_each_cluster(s == bottom)
+
+
+def rsi_divergences(
+    price: pd.Series,
+    rsi_series: pd.Series,
+    k: int = PIVOT_WINDOW,
+    min_gap: int = DIVERGENCE_MIN_GAP,
+    max_gap: int = DIVERGENCE_MAX_GAP,
+) -> pd.DataFrame:
+    """RSI divergences on the series as given (a yield or spread, not a bond price).
+
+    bullish: a lower swing low in the series while the RSI makes a higher low.
+    bearish: a higher swing high in the series while the RSI makes a lower high.
+    Each swing is compared with the previous swing of the same kind, which must be
+    between `min_gap` and `max_gap` trading days earlier. RSI is read on the same bar
+    as the swing. Rows are dated at the second swing.
+    """
+    s = price.dropna()
+    r = rsi_series.reindex(s.index)
+    position = {d: i for i, d in enumerate(s.index)}
+    highs, lows = find_pivots(s, k)
+
+    rows = []
+    for kind, pivots in (("bearish", highs), ("bullish", lows)):
+        prev = None
+        for d in pivots:
+            if prev is not None and min_gap <= position[d] - position[prev] <= max_gap:
+                if pd.notna(r[d]) and pd.notna(r[prev]):
+                    worse_price = s[d] > s[prev] if kind == "bearish" else s[d] < s[prev]
+                    weaker_rsi = r[d] < r[prev] if kind == "bearish" else r[d] > r[prev]
+                    if worse_price and weaker_rsi:
+                        rows.append((d, kind, s[d], r[d], prev, s[prev], r[prev]))
+            prev = d
+    cols = ["date", "kind", "price", "rsi", "prev_date", "prev_price", "prev_rsi"]
+    return pd.DataFrame(rows, columns=cols).sort_values("date").reset_index(drop=True)
+
+
 def zscore(series: pd.Series, window: int) -> pd.Series:
     """Rolling z-score: (x - rolling mean) / rolling sample std over `window` observations.
 

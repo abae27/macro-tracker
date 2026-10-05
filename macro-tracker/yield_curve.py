@@ -13,6 +13,8 @@ import streamlit as st
 
 from treasury import (
     MACD_FAST,
+    PIVOT_WINDOW,
+    rsi_divergences,
     MACD_SIGNAL,
     MACD_SLOW,
     RSI_AVG_WINDOW,
@@ -129,8 +131,51 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
     return _base_layout(fig, 480).update_layout(hovermode="closest")
 
 
+DIVERGENCE_STYLE = {
+    "bullish": dict(symbol="triangle-up", color="#2e9e4f", label="Bullish divergence"),
+    "bearish": dict(symbol="triangle-down", color="#d73027", label="Bearish divergence"),
+}
+
+
+def divergence_traces(divs: pd.DataFrame, column: str, unit: str) -> list[go.Scatter]:
+    """Triangle markers (green = bullish, red = bearish) at each divergence's second swing.
+
+    `column` is 'price' for the main chart or 'rsi' for the RSI panel.
+    """
+    traces = []
+    for kind, style in DIVERGENCE_STYLE.items():
+        sub = divs[divs["kind"] == kind]
+        if sub.empty:
+            continue
+        suffix = " bp" if unit == "bp" else "%"
+        details = [
+            f"{row.price:.2f}{suffix} vs {row.prev_price:.2f}{suffix} on {row.prev_date:%Y-%m-%d}"
+            f"<br>RSI {row.rsi:.1f} vs {row.prev_rsi:.1f}"
+            for row in sub.itertuples()
+        ]
+        traces.append(
+            go.Scatter(
+                x=sub["date"],
+                y=sub[column],
+                mode="markers",
+                name=style["label"],
+                marker=dict(
+                    symbol=style["symbol"], size=12, color=style["color"],
+                    line=dict(color="white", width=1),
+                ),
+                text=details,
+                hovertemplate="%{text}<extra>" + style["label"] + "</extra>",
+            )
+        )
+    return traces
+
+
 def series_figure(
-    series: pd.Series, name: str, unit: str, emas: dict[int, pd.Series] | None = None
+    series: pd.Series,
+    name: str,
+    unit: str,
+    emas: dict[int, pd.Series] | None = None,
+    divergences: pd.DataFrame | None = None,
 ) -> go.Figure:
     """Time series of one tenor (unit '%') or spread (unit 'bp'); gaps stay gaps.
 
@@ -160,10 +205,14 @@ def series_figure(
                 hovertemplate="%{y:.2f}" + suffix + f"<extra>{window}D EMA</extra>",
             )
         )
+    shown = divergences is not None and not divergences.empty
+    if shown:
+        for trace in divergence_traces(divergences, "price", unit):
+            fig.add_trace(trace)
     if unit == "bp":
         fig.add_hline(y=0, line=dict(color=INK, width=1, dash="dot"))
     fig.update_yaxes(title="Spread (bp)" if unit == "bp" else "Yield (%)")
-    return _align(_base_layout(fig, 380, showlegend=bool(emas)))
+    return _align(_base_layout(fig, 380, showlegend=bool(emas) or shown))
 
 
 def selected_emas(full: pd.Series, windows: list[str], lookback: str) -> dict[int, pd.Series]:
@@ -186,7 +235,12 @@ def _hline(fig: go.Figure, y: float, dash: str = "dash", color: str = "#8d99ae")
     fig.add_hline(y=y, line=dict(color=color, width=1, dash=dash))
 
 
-def rsi_figure(rsi_line: pd.Series, rsi_avg: pd.Series) -> go.Figure:
+def rsi_figure(
+    rsi_line: pd.Series,
+    rsi_avg: pd.Series,
+    divergences: pd.DataFrame | None = None,
+    unit: str = "%",
+) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=rsi_line.index, y=rsi_line.values, mode="lines", name=f"RSI ({RSI_PERIOD})",
@@ -198,6 +252,9 @@ def rsi_figure(rsi_line: pd.Series, rsi_avg: pd.Series) -> go.Figure:
         line=dict(color="#fb8c1a", width=1.8), connectgaps=False,
         hovertemplate="%{y:.1f}<extra>" + f"{RSI_AVG_WINDOW}D avg</extra>",
     ))
+    if divergences is not None and not divergences.empty:
+        for trace in divergence_traces(divergences, "rsi", unit):
+            fig.add_trace(trace)
     _hline(fig, 70)
     _hline(fig, 30)
     fig.update_yaxes(title="RSI", range=[0, 100], tickvals=[0, 30, 50, 70, 100])
@@ -242,7 +299,17 @@ def zscore_figure(zs: dict[int, pd.Series]) -> go.Figure:
     return _align(_base_layout(fig, 260, showlegend=bool(zs)))
 
 
-def render_indicator_panels(full: pd.Series, lookback: str, scale: float, unit: str, key: str) -> None:
+def window_divergences(full: pd.Series, lookback: str) -> pd.DataFrame:
+    """Divergences found on the full history, kept only if they fall inside `lookback`."""
+    divs = rsi_divergences(full, rsi(full))
+    start = slice_lookback(full, lookback).index[0] if len(full) else None
+    return divs if divs.empty or start is None else divs[divs["date"] >= start]
+
+
+def render_indicator_panels(
+    full: pd.Series, lookback: str, scale: float, unit: str, key: str,
+    divergences: pd.DataFrame | None = None, price_unit: str = "%",
+) -> None:
     """RSI, MACD and Z-score panels, in that order, under a chart.
 
     Everything is computed on the full loaded history and cropped to `lookback`
@@ -251,7 +318,10 @@ def render_indicator_panels(full: pd.Series, lookback: str, scale: float, unit: 
     r = rsi(full)
     st.markdown(f"**RSI ({RSI_PERIOD}) with {RSI_AVG_WINDOW}-day average**")
     st.plotly_chart(
-        rsi_figure(slice_lookback(r, lookback), slice_lookback(rsi_average(r), lookback)),
+        rsi_figure(
+            slice_lookback(r, lookback), slice_lookback(rsi_average(r), lookback),
+            divergences, price_unit,
+        ),
         width="stretch", key=f"{key}_rsi",
     )
 
@@ -273,6 +343,21 @@ def render_indicator_panels(full: pd.Series, lookback: str, scale: float, unit: 
     st.plotly_chart(zscore_figure(zs), width="stretch", key=f"{key}_zchart")
     if not zs:
         st.caption("Select one or more z-score windows above.")
+
+
+def divergence_picker(container, key: str) -> bool:
+    """Checkbox for the RSI divergence triangles on the chart and the RSI panel."""
+    return container.checkbox(
+        "Show RSI divergences  (green ▲ bullish, red ▼ bearish)",
+        value=True,
+        key=key,
+        help=(
+            "Bearish: the series makes a higher swing high while RSI makes a lower high. "
+            "Bullish: a lower swing low while RSI makes a higher low. Swings are the extreme of "
+            f"{PIVOT_WINDOW} trading days either side, so the newest {PIVOT_WINDOW} days cannot "
+            "show a signal yet. Applied to the yield/spread itself, not to bond prices."
+        ),
+    )
 
 
 def ema_picker(container, key: str) -> list[str]:
@@ -327,16 +412,23 @@ def render_yield_curve(api_key: str | None = None) -> None:
                          if "10Y" in df.columns else 0, key="yc_tenor")
     tenor_lb = t2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_tenor_lb")
     tenor_emas = ema_picker(st, "yc_tenor_ema")
+    tenor_divs = divergence_picker(st, "yc_tenor_div")
+    tenor_div_rows = window_divergences(df[tenor], tenor_lb) if tenor_divs else None
     tseries = slice_lookback(df[tenor], tenor_lb)
     st.plotly_chart(
-        series_figure(tseries, tenor, "%", selected_emas(df[tenor], tenor_emas, tenor_lb)),
+        series_figure(
+            tseries, tenor, "%", selected_emas(df[tenor], tenor_emas, tenor_lb), tenor_div_rows
+        ),
         width="stretch",
         key="yc_tenor_chart",
     )
     if tseries.isna().any():
         first = df[tenor].first_valid_index()
         st.caption(f"{tenor} has no data before {first:%Y-%m-%d} (the tenor did not exist yet).")
-    render_indicator_panels(df[tenor], tenor_lb, scale=100.0, unit="bp", key="yc_tenor_ind")
+    render_indicator_panels(
+        df[tenor], tenor_lb, scale=100.0, unit="bp", key="yc_tenor_ind",
+        divergences=tenor_div_rows, price_unit="%",
+    )
 
     # 2. spreads: chart first, then the table
     st.subheader("Spreads")
@@ -345,18 +437,22 @@ def render_yield_curve(api_key: str | None = None) -> None:
     spread_name = s1.selectbox("Spread", list(SPREADS), key="yc_spread")
     spread_lb = s2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_spread_lb")
     spread_emas = ema_picker(st, "yc_spread_ema")
+    spread_divs = divergence_picker(st, "yc_spread_div")
+    spread_div_rows = window_divergences(spreads[spread_name], spread_lb) if spread_divs else None
     series = slice_lookback(spreads[spread_name], spread_lb)
     short, long_ = SPREADS[spread_name]
     st.plotly_chart(
         series_figure(
-            series, spread_name, "bp", selected_emas(spreads[spread_name], spread_emas, spread_lb)
+            series, spread_name, "bp",
+            selected_emas(spreads[spread_name], spread_emas, spread_lb), spread_div_rows,
         ),
         width="stretch",
         key="yc_spread_chart",
     )
     st.caption(f"{spread_name} = {long_} yield minus {short} yield, in basis points.")
     render_indicator_panels(
-        spreads[spread_name], spread_lb, scale=1.0, unit="bp", key="yc_spread_ind"
+        spreads[spread_name], spread_lb, scale=1.0, unit="bp", key="yc_spread_ind",
+        divergences=spread_div_rows, price_unit="bp",
     )
     st.dataframe(
         changes(spreads, scale=1.0),

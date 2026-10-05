@@ -346,6 +346,61 @@ def test_indicators_do_not_fill_missing_tenor_history_or_gaps():
     assert np.isnan(t.zscore(gap, 3).iloc[2])  # the missing day itself is not invented
 
 
+# ------------------------------------------------------------------ divergences
+
+DIV_IDX = pd.bdate_range("2026-01-05", periods=16)
+DIV_PRICE = pd.Series([2, 3, 6, 3, 2, 1, 2, 3, 7, 3, 2, 0.5, 2, 3, 4, 5.0], index=DIV_IDX)
+DIV_RSI = pd.Series([50, 55, 80, 60, 40, 30, 45, 55, 70, 55, 40, 35, 45, 55, 60, 65.0], index=DIV_IDX)
+
+
+def positions(idx):
+    return [DIV_IDX.get_loc(d) for d in idx]
+
+
+def test_pivots_are_swing_extremes_and_never_the_last_k_bars():
+    highs, lows = t.find_pivots(DIV_PRICE, 2)
+    assert positions(highs) == [2, 8] and positions(lows) == [5, 11]
+    # the rise at the end (positions 12-15) is not a pivot: it cannot be confirmed yet
+    assert all(p < len(DIV_PRICE) - 2 for p in positions(highs) + positions(lows))
+
+
+def test_flat_top_keeps_only_the_first_bar():
+    s = pd.Series([1, 2, 5, 5, 5, 2, 1, 2, 3, 2, 1.0], index=pd.bdate_range("2026-01-05", periods=11))
+    highs, _ = t.find_pivots(s, 2)
+    # the 5-5-5 plateau (positions 2-4) yields one pivot, at its first bar; position 8 is a
+    # genuine separate swing high
+    assert [s.index.get_loc(d) for d in highs] == [2, 8]
+
+
+def test_bearish_and_bullish_divergences_are_found_and_dated_at_the_second_swing():
+    d = t.rsi_divergences(DIV_PRICE, DIV_RSI, k=2, min_gap=3, max_gap=20)
+    assert list(d["kind"]) == ["bearish", "bullish"]
+    bear, bull = d.iloc[0], d.iloc[1]
+    assert bear["date"] == DIV_IDX[8] and bear["prev_date"] == DIV_IDX[2]
+    assert (bear["price"], bear["prev_price"], bear["rsi"], bear["prev_rsi"]) == (7.0, 6.0, 70.0, 80.0)
+    assert bull["date"] == DIV_IDX[11] and (bull["price"], bull["prev_price"]) == (0.5, 1.0)
+    assert (bull["rsi"], bull["prev_rsi"]) == (35.0, 30.0)
+
+
+def test_no_divergence_when_rsi_confirms_the_move():
+    confirming = DIV_RSI.copy()
+    confirming.iloc[8] = 90.0   # higher high AND higher RSI high: confirmation, not divergence
+    confirming.iloc[11] = 20.0  # lower low AND lower RSI low
+    assert t.rsi_divergences(DIV_PRICE, confirming, k=2, min_gap=3, max_gap=20).empty
+
+
+def test_swings_too_close_or_too_far_apart_are_not_compared():
+    assert t.rsi_divergences(DIV_PRICE, DIV_RSI, k=2, min_gap=7, max_gap=20).empty  # 6 bars apart
+    assert t.rsi_divergences(DIV_PRICE, DIV_RSI, k=2, min_gap=3, max_gap=5).empty
+
+
+def test_divergence_skips_swings_where_rsi_is_not_yet_available():
+    early = DIV_RSI.copy()
+    early.iloc[:6] = np.nan  # RSI warm-up covers the first swings
+    d = t.rsi_divergences(DIV_PRICE, early, k=2, min_gap=3, max_gap=20)
+    assert d.empty or "bearish" not in set(d["kind"])
+
+
 # ------------------------------------------------------------ loading and fallback
 
 
