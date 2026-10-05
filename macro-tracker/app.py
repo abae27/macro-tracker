@@ -610,7 +610,7 @@ def main() -> None:
         )
         st.stop()
 
-    tab_cpi, tab_curve, tab_explorer = st.tabs(["US CPI", "Yield Curve", "Series Explorer"])
+    tab_cpi, tab_rates, tab_explorer = st.tabs(["US CPI", "Rates", "Series Explorer"])
     with tab_cpi:
         tab_nowcast, tab_levels = st.tabs(["CPI Nowcast Beat/Miss", "CPI Index Level 3"])
         with tab_nowcast:
@@ -619,8 +619,10 @@ def main() -> None:
             (tab_oer,) = st.tabs(["OER"])
             with tab_oer:
                 render_oer(api_key)
-    with tab_curve:
-        render_yield_curve(api_key)
+    with tab_rates:
+        (tab_cash,) = st.tabs(["US Cash Treasuries"])
+        with tab_cash:
+            render_yield_curve(api_key)
     with tab_explorer:
         render_explorer(api_key)
 

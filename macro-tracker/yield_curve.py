@@ -18,6 +18,7 @@ from treasury import (
     clear_curve_cache,
     compute_spreads,
     curve_on,
+    horizon_label,
     load_yield_curve,
     slice_lookback,
     target_date,
@@ -25,15 +26,13 @@ from treasury import (
 )
 
 INK = "#0a1f3d"
-# latest curve in navy, then progressively lighter / warmer comparison curves
-CURVE_STYLES = [
-    ("Latest", INK, "solid", 3.5),
-    ("1 day ago", "#1e6fd9", "solid", 2),
-    ("1 week ago", "#4da3ff", "dash", 2),
-    ("1 month ago", "#fb9a4b", "dash", 2),
-    ("1 year ago", "#d73027", "dot", 2),
-]
-CURVE_OFFSETS = {"1 day ago": "1D", "1 week ago": "1W", "1 month ago": "1M", "1 year ago": "1Y"}
+# comparison curves cycle through these (the latest curve is always navy and thickest)
+COMPARE_COLORS = ["#1e6fd9", "#d73027", "#fb9a4b", "#2a9d8f", "#7b5ea7", "#4da3ff", "#8d99ae", "#e9c46a"]
+COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
+
+COMPARE_PRESETS = ["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
+DEFAULT_COMPARE = ["1D", "1W", "1M", "1Y"]
+CUSTOM_UNITS = {"Days": "D", "Weeks": "W", "Months": "M", "Years": "Y"}
 LOOKBACKS = ["1Y", "3Y", "5Y", "Max"]
 FULL_HISTORY_YEARS = date.today().year - 1990
 
@@ -56,18 +55,34 @@ def _base_layout(fig: go.Figure, height: int, **kwargs) -> go.Figure:
 # ----------------------------------------------------------------------- plotting
 
 
-def curve_figure(df: pd.DataFrame, log_x: bool = False) -> go.Figure:
-    """Yield vs maturity (numeric years) for the latest date and four lookbacks."""
+def comparison_curves(df: pd.DataFrame, horizons: list[str]):
+    """(horizon, date, curve) for each requested horizon, nearest date first.
+
+    Horizons that fall before the start of the data are returned separately so the
+    page can say so instead of silently dropping them.
+    """
     latest_date = df.index[-1]
+    found, missing = [], []
+    for h in dict.fromkeys(horizons):  # de-duplicate, keep order
+        hit = curve_on(df, target_date(df.index, latest_date, h))
+        (found if hit else missing).append((h, *hit) if hit else h)
+    found.sort(key=lambda item: item[1], reverse=True)
+    return found, missing
+
+
+def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | None = None) -> go.Figure:
+    """Yield vs maturity (numeric years): the latest curve plus any chosen comparison dates."""
+    latest_date = df.index[-1]
+    curves = [("Latest", latest_date, df.iloc[-1], INK, "solid", 3.5)]
+    found, _ = comparison_curves(df, DEFAULT_COMPARE if horizons is None else horizons)
+    for i, (h, when, row) in enumerate(found):
+        curves.append(
+            (horizon_label(h), when, row, COMPARE_COLORS[i % len(COMPARE_COLORS)],
+             COMPARE_DASHES[i % len(COMPARE_DASHES)], 2)
+        )
+
     fig = go.Figure()
-    for name, color, dash, width in CURVE_STYLES:
-        if name == "Latest":
-            found = (latest_date, df.iloc[-1])
-        else:
-            found = curve_on(df, target_date(df.index, latest_date, CURVE_OFFSETS[name]))
-        if found is None:
-            continue
-        when, row = found
+    for name, when, row, color, dash, width in curves:
         row = row.dropna()  # a gap is a gap: tenors with no print are not drawn or bridged
         fig.add_trace(
             go.Scatter(
@@ -147,8 +162,34 @@ def render_yield_curve(api_key: str | None = None) -> None:
 
     # 1. latest curve vs history
     st.subheader("Yield curve")
+    p1, p2, p3 = st.columns([4, 1, 1])
+    picked = p1.multiselect(
+        "Compare the latest curve with",
+        COMPARE_PRESETS,
+        default=DEFAULT_COMPARE,
+        key="yc_compare",
+        help="Pick any combination. YTD = last print of the prior year; 1D = previous trading day.",
+    )
+    custom_n = p2.number_input(
+        "Custom offset", min_value=0, max_value=60, value=0, step=1, key="yc_custom_n",
+        help="Add one more comparison date. 0 = off.",
+    )
+    custom_unit = p3.selectbox("Unit", list(CUSTOM_UNITS), index=2, key="yc_custom_unit")
+    horizons = list(picked)
+    if custom_n:
+        horizons.append(f"{int(custom_n)}{CUSTOM_UNITS[custom_unit]}")
     log_x = st.checkbox("Log maturity axis (spreads out the short end)", key="yc_log")
-    st.plotly_chart(curve_figure(df, log_x), width="stretch", key="yc_curve")
+
+    _, missing = comparison_curves(df, horizons)
+    st.plotly_chart(curve_figure(df, log_x, horizons), width="stretch", key="yc_curve")
+    if missing:
+        st.caption(
+            "No data on or before these dates, so they are not drawn: "
+            + ", ".join(horizon_label(h) for h in missing)
+            + "."
+        )
+    if not horizons:
+        st.caption("Select one or more comparison dates above to overlay earlier curves.")
 
     # 2. all tenors
     st.subheader("All tenors")

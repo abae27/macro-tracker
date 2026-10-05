@@ -82,6 +82,14 @@ class CurveData:
 _TENOR_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(months?|mo|m|years?|yr|y)\s*$", re.IGNORECASE)
 
 
+# Tenors the feed publishes but this dashboard deliberately does not show.
+EXCLUDED_TENORS = frozenset({"1.5M"})
+
+
+def drop_excluded(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=[c for c in df.columns if c in EXCLUDED_TENORS])
+
+
 def tenor_years(label: str) -> float | None:
     """Maturity in years from any label the feed uses ('1 Mo', '1.5 Month', '10 Yr', '3M', '2Y')."""
     match = _TENOR_RE.match(str(label))
@@ -176,7 +184,7 @@ def fetch_treasury_history(start_year: int, end_year: int | None = None) -> pd.D
     if not frames:
         raise TreasuryError("Treasury returned no observations")
     df = pd.concat(frames).sort_index()
-    df = df[~df.index.duplicated(keep="last")]
+    df = drop_excluded(df[~df.index.duplicated(keep="last")])
     return df[maturity_order(df.columns)]  # missing tenors in early years stay NaN
 
 
@@ -248,22 +256,38 @@ def asof_value(series: pd.Series, target: pd.Timestamp | None) -> float:
     return float(s.iloc[-1]) if len(s) else float("nan")
 
 
+_OFFSET_RE = re.compile(r"^(\d+)([DWMY])$")
+_UNIT_NAMES = {"D": "day", "W": "week", "M": "month", "Y": "year"}
+_UNIT_OFFSETS = {"D": "days", "W": "weeks", "M": "months", "Y": "years"}
+
+
 def target_date(index: pd.DatetimeIndex, latest: pd.Timestamp, horizon: str) -> pd.Timestamp | None:
-    """Reference date for a horizon. The caller takes the last observation at/before it."""
+    """Reference date for a horizon. The caller takes the last observation at/before it.
+
+    Horizons: '1D' (previous trading day), 'YTD' (end of the prior year), or any
+    '<n><D|W|M|Y>' calendar offset such as '2W', '2M', '6M', '2Y'.
+    """
     if horizon == "1D":  # previous trading day = previous date in the data
         earlier = index[index < latest]
         return earlier[-1] if len(earlier) else None
-    if horizon == "1W":
-        return latest - pd.DateOffset(weeks=1)
-    if horizon == "1M":
-        return latest - pd.DateOffset(months=1)
-    if horizon == "3M":
-        return latest - pd.DateOffset(months=3)
-    if horizon == "1Y":
-        return latest - pd.DateOffset(years=1)
     if horizon == "YTD":  # last observation of the prior year
         return pd.Timestamp(latest.year - 1, 12, 31)
-    raise ValueError(f"unknown horizon {horizon!r}")
+    match = _OFFSET_RE.match(horizon)
+    if not match or int(match.group(1)) < 1:
+        raise ValueError(f"unknown horizon {horizon!r}")
+    n, unit = int(match.group(1)), match.group(2)
+    return latest - pd.DateOffset(**{_UNIT_OFFSETS[unit]: n})
+
+
+def horizon_label(horizon: str) -> str:
+    """'2M' -> '2 months ago', '1D' -> '1 day ago', 'YTD' -> 'Prior year-end'."""
+    if horizon == "YTD":
+        return "Prior year-end"
+    match = _OFFSET_RE.match(horizon)
+    if not match:
+        raise ValueError(f"unknown horizon {horizon!r}")
+    n, unit = int(match.group(1)), match.group(2)
+    return f"{n} {_UNIT_NAMES[unit]}{'s' if n != 1 else ''} ago"
 
 
 def changes(df: pd.DataFrame, horizons=HORIZONS, scale: float = 100.0) -> pd.DataFrame:

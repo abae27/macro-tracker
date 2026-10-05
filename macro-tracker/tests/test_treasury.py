@@ -158,6 +158,50 @@ def test_curve_on_returns_whole_row_at_or_before_target(ten_year):
     assert t.curve_on(ten_year, ts("2025-01-01")) is None
 
 
+@pytest.mark.parametrize(
+    "horizon, expected",
+    [
+        ("2W", "2025-12-29"),
+        ("2M", "2025-11-12"),
+        ("6M", "2025-07-12"),
+        ("2Y", "2024-01-12"),
+        ("10D", "2026-01-02"),
+    ],
+)
+def test_generic_horizons_are_calendar_offsets_from_the_latest_date(ten_year, horizon, expected):
+    assert t.target_date(ten_year.index, ts("2026-01-12"), horizon) == ts(expected)
+
+
+def test_custom_horizon_uses_last_observation_at_or_before_target_never_after(ten_year):
+    out = t.changes(ten_year, horizons=("2W", "10D"))
+    # 2W -> 2025-12-29: the data starts 12-30, so there is nothing at or before it (NaN,
+    # not the next available day)
+    assert np.isnan(out.loc["10Y", "2W"])
+    # 10D -> 2026-01-02: exact observation (4.20) -> 4.60 is +40 bp
+    assert out.loc["10Y", "10D"] == pytest.approx(40.0)
+
+
+def test_bad_horizon_is_rejected(ten_year):
+    for bad in ("0D", "week", "1Q", ""):
+        with pytest.raises(ValueError):
+            t.target_date(ten_year.index, ts("2026-01-12"), bad)
+
+
+def test_horizon_labels():
+    assert t.horizon_label("1D") == "1 day ago"
+    assert t.horizon_label("2M") == "2 months ago"
+    assert t.horizon_label("1Y") == "1 year ago"
+    assert t.horizon_label("YTD") == "Prior year-end"
+
+
+def test_excluded_tenor_is_dropped_but_other_tenors_are_kept(sample):
+    assert "1.5M" in sample.columns  # the parser stays faithful to the feed
+    trimmed = t.drop_excluded(sample)
+    assert "1.5M" not in trimmed.columns
+    assert list(trimmed.columns) == [c for c in sample.columns if c != "1.5M"]
+    assert trimmed.loc["2025-12-31", "2M"] == 3.67
+
+
 # ------------------------------------------------------------------------ spreads
 
 
