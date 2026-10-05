@@ -30,7 +30,8 @@ INK = "#0a1f3d"
 COMPARE_COLORS = ["#1e6fd9", "#d73027", "#fb9a4b", "#2a9d8f", "#7b5ea7", "#4da3ff", "#8d99ae", "#e9c46a"]
 COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
 
-COMPARE_PRESETS = ["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
+AXIS_TENORS = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+COMPARE_PRESETS =["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 DEFAULT_COMPARE = ["1D", "1W", "1M", "1Y"]
 CUSTOM_UNITS = {"Days": "D", "Weeks": "W", "Months": "M", "Years": "Y"}
 LOOKBACKS = ["1Y", "3Y", "5Y", "Max"]
@@ -96,12 +97,14 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
                 hovertemplate="%{customdata}: %{y:.2f}%<extra>" + name + "</extra>",
             )
         )
+    # Label only these on the axis (under 1Y just 1M / 3M / 6M); every tenor is still plotted
+    # and shows its label on hover.
+    labelled = [c for c in AXIS_TENORS if c in df.columns]
     fig.update_xaxes(
         title="Maturity (years)",
         type="log" if log_x else "linear",
-        tickvals=[tenor_years(c) for c in df.columns],
-        ticktext=list(df.columns),
-        tickangle=-45,
+        tickvals=[tenor_years(c) for c in labelled],
+        ticktext=labelled,
     )
     fig.update_yaxes(title="Yield (%)", ticksuffix="%")
     return _base_layout(fig, 480).update_layout(hovermode="closest")
@@ -178,7 +181,11 @@ def render_yield_curve(api_key: str | None = None) -> None:
     horizons = list(picked)
     if custom_n:
         horizons.append(f"{int(custom_n)}{CUSTOM_UNITS[custom_unit]}")
-    log_x = st.checkbox("Log maturity axis (spreads out the short end)", key="yc_log")
+    log_x = st.checkbox(
+        "Log maturity axis (spreads out the short end; untick for true-to-scale spacing)",
+        value=True,
+        key="yc_log",
+    )
 
     _, missing = comparison_curves(df, horizons)
     st.plotly_chart(curve_figure(df, log_x, horizons), width="stretch", key="yc_curve")
