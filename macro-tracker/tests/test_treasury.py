@@ -198,6 +198,7 @@ def test_excluded_tenor_is_dropped_but_other_tenors_are_kept(sample):
     assert "1.5M" in sample.columns  # the parser stays faithful to the feed
     trimmed = t.drop_excluded(sample)
     assert "1.5M" not in trimmed.columns
+    assert "1M" in trimmed.columns  # 1M stays in the data (it is only hidden on the chart)
     assert list(trimmed.columns) == [c for c in sample.columns if c != "1.5M"]
     assert trimmed.loc["2025-12-31", "2M"] == 3.67
 
@@ -282,10 +283,12 @@ def test_load_falls_back_to_fred_and_reports_why(monkeypatch):
 
 
 def test_load_strips_excluded_tenor_even_from_a_stale_cached_frame(monkeypatch):
-    stale = pd.DataFrame({"1M": [4.0], "1.5M": [4.1], "2M": [4.2]}, index=pd.to_datetime(["2026-01-05"]))
+    stale = pd.DataFrame(
+        {"1M": [4.0], "1.5M": [4.1], "2M": [4.2], "3M": [4.3]}, index=pd.to_datetime(["2026-01-05"])
+    )
     monkeypatch.setattr(t, "_cached_treasury", lambda year: stale)
     data = t.load_yield_curve(5)
-    assert list(data.df.columns) == ["1M", "2M"] and not data.fallback
+    assert list(data.df.columns) == ["1M", "2M", "3M"] and not data.fallback
 
 
 def test_load_never_raises_when_everything_fails(monkeypatch):

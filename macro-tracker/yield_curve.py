@@ -30,7 +30,9 @@ INK = "#0a1f3d"
 COMPARE_COLORS = ["#1e6fd9", "#d73027", "#fb9a4b", "#2a9d8f", "#7b5ea7", "#4da3ff", "#8d99ae", "#e9c46a"]
 COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
 
-AXIS_TENORS = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+# Kept in the data and tables, but not drawn on the curve chart.
+CHART_HIDDEN_TENORS = ["1M"]
+AXIS_TENORS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
 COMPARE_PRESETS =["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 DEFAULT_COMPARE = ["1D", "1W", "1M", "1Y"]
 CUSTOM_UNITS = {"Days": "D", "Weeks": "W", "Months": "M", "Years": "Y"}
@@ -84,7 +86,8 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
 
     fig = go.Figure()
     for name, when, row, color, dash, width in curves:
-        row = row.dropna()  # a gap is a gap: tenors with no print are not drawn or bridged
+        # a gap is a gap: tenors with no print are not drawn or bridged
+        row = row.drop(CHART_HIDDEN_TENORS, errors="ignore").dropna()
         fig.add_trace(
             go.Scatter(
                 x=[tenor_years(c) for c in row.index],
@@ -97,7 +100,7 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
                 hovertemplate="%{customdata}: %{y:.2f}%<extra>" + name + "</extra>",
             )
         )
-    # Label only these on the axis (under 1Y just 1M / 3M / 6M); every tenor is still plotted
+    # Label only these on the axis (under 1Y just 3M / 6M); every tenor is still plotted
     # and shows its label on hover.
     labelled = [c for c in AXIS_TENORS if c in df.columns]
     fig.update_xaxes(
