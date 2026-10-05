@@ -12,6 +12,16 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from treasury import (
+    MACD_FAST,
+    MACD_SIGNAL,
+    MACD_SLOW,
+    RSI_AVG_WINDOW,
+    RSI_PERIOD,
+    Z_WINDOWS,
+    macd,
+    rsi,
+    rsi_average,
+    zscore,
     EMA_WINDOWS,
     HORIZONS,
     ema,
@@ -34,6 +44,8 @@ COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
 
 # Kept in the data and tables, but not drawn on the curve chart.
 CHART_HIDDEN_TENORS = ["1M"]
+Z_COLORS = {63: "#1e6fd9", 126: "#7b5ea7", 252: "#0a1f3d"}
+Z_OPTIONS = [f"{n}D" for n in Z_WINDOWS]
 EMA_COLORS = {20: "#8e44ad", 50: "#fb8c1a", 100: "#2e9e4f", 200: "#d73027"}  # purple/orange/green/red
 EMA_OPTIONS = [f"{n}D" for n in EMA_WINDOWS]
 AXIS_TENORS =["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
@@ -151,7 +163,7 @@ def series_figure(
     if unit == "bp":
         fig.add_hline(y=0, line=dict(color=INK, width=1, dash="dot"))
     fig.update_yaxes(title="Spread (bp)" if unit == "bp" else "Yield (%)")
-    return _base_layout(fig, 380, showlegend=bool(emas))
+    return _align(_base_layout(fig, 380, showlegend=bool(emas)))
 
 
 def selected_emas(full: pd.Series, windows: list[str], lookback: str) -> dict[int, pd.Series]:
@@ -161,6 +173,106 @@ def selected_emas(full: pd.Series, windows: list[str], lookback: str) -> dict[in
         n = int(label.rstrip("D"))
         out[n] = slice_lookback(ema(full, n), lookback)
     return out
+
+
+def _align(fig: go.Figure) -> go.Figure:
+    """Same fixed left/right margins on every series panel, so their x-axes line up."""
+    fig.update_layout(margin=dict(l=70, r=20, t=30, b=10))
+    fig.update_yaxes(automargin=False)
+    return fig
+
+
+def _hline(fig: go.Figure, y: float, dash: str = "dash", color: str = "#8d99ae") -> None:
+    fig.add_hline(y=y, line=dict(color=color, width=1, dash=dash))
+
+
+def rsi_figure(rsi_line: pd.Series, rsi_avg: pd.Series) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=rsi_line.index, y=rsi_line.values, mode="lines", name=f"RSI ({RSI_PERIOD})",
+        line=dict(color="#1e6fd9", width=1.8), connectgaps=False,
+        hovertemplate="%{y:.1f}<extra>RSI</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=rsi_avg.index, y=rsi_avg.values, mode="lines", name=f"{RSI_AVG_WINDOW}D average",
+        line=dict(color="#fb8c1a", width=1.8), connectgaps=False,
+        hovertemplate="%{y:.1f}<extra>" + f"{RSI_AVG_WINDOW}D avg</extra>",
+    ))
+    _hline(fig, 70)
+    _hline(fig, 30)
+    fig.update_yaxes(title="RSI", range=[0, 100], tickvals=[0, 30, 50, 70, 100])
+    return _align(_base_layout(fig, 260, showlegend=True))
+
+
+def macd_figure(m: pd.DataFrame, unit: str) -> go.Figure:
+    hist = m["Histogram"]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hist.index, y=hist.values, name="Histogram",
+        marker_color=["#2e9e4f" if v >= 0 else "#d73027" for v in hist.fillna(0)],
+        hovertemplate="%{y:.2f}<extra>Histogram</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=m.index, y=m["MACD"].values, mode="lines", name="MACD",
+        line=dict(color="#1e6fd9", width=1.8), connectgaps=False,
+        hovertemplate="%{y:.2f}<extra>MACD</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=m.index, y=m["Signal"].values, mode="lines", name="Signal",
+        line=dict(color="#fb8c1a", width=1.8), connectgaps=False,
+        hovertemplate="%{y:.2f}<extra>Signal</extra>",
+    ))
+    _hline(fig, 0, "dot", INK)
+    fig.update_yaxes(title=f"MACD ({unit})")
+    return _align(_base_layout(fig, 260, showlegend=True))
+
+
+def zscore_figure(zs: dict[int, pd.Series]) -> go.Figure:
+    fig = go.Figure()
+    for window, z in zs.items():
+        fig.add_trace(go.Scatter(
+            x=z.index, y=z.values, mode="lines", name=f"{window}D",
+            line=dict(color=Z_COLORS[window], width=1.8), connectgaps=False,
+            hovertemplate="%{y:.2f}<extra>" + f"{window}D z</extra>",
+        ))
+    _hline(fig, 0, "dot", INK)
+    _hline(fig, 2)
+    _hline(fig, -2)
+    fig.update_yaxes(title="Z-score")
+    return _align(_base_layout(fig, 260, showlegend=bool(zs)))
+
+
+def render_indicator_panels(full: pd.Series, lookback: str, scale: float, unit: str, key: str) -> None:
+    """RSI, MACD and Z-score panels, in that order, under a chart.
+
+    Everything is computed on the full loaded history and cropped to `lookback`
+    afterwards, so no line is distorted by a warm-up that starts inside the window.
+    """
+    r = rsi(full)
+    st.markdown(f"**RSI ({RSI_PERIOD}) with {RSI_AVG_WINDOW}-day average**")
+    st.plotly_chart(
+        rsi_figure(slice_lookback(r, lookback), slice_lookback(rsi_average(r), lookback)),
+        width="stretch", key=f"{key}_rsi",
+    )
+
+    st.markdown(f"**MACD ({MACD_FAST}, {MACD_SLOW}, {MACD_SIGNAL})**")
+    st.plotly_chart(
+        macd_figure(slice_lookback(macd(full, scale=scale), lookback), unit),
+        width="stretch", key=f"{key}_macd",
+    )
+
+    st.markdown("**Z-score**")
+    picked = st.multiselect(
+        "Z-score windows",
+        Z_OPTIONS,
+        default=Z_OPTIONS,
+        key=f"{key}_z",
+        help="Rolling z-score over trading days. Deselect any to hide it.",
+    )
+    zs = {int(w.rstrip("D")): slice_lookback(zscore(full, int(w.rstrip("D"))), lookback) for w in picked}
+    st.plotly_chart(zscore_figure(zs), width="stretch", key=f"{key}_zchart")
+    if not zs:
+        st.caption("Select one or more z-score windows above.")
 
 
 def ema_picker(container, key: str) -> list[str]:
@@ -224,6 +336,7 @@ def render_yield_curve(api_key: str | None = None) -> None:
     if tseries.isna().any():
         first = df[tenor].first_valid_index()
         st.caption(f"{tenor} has no data before {first:%Y-%m-%d} (the tenor did not exist yet).")
+    render_indicator_panels(df[tenor], tenor_lb, scale=100.0, unit="bp", key="yc_tenor_ind")
 
     # 2. spreads: chart first, then the table
     st.subheader("Spreads")
@@ -242,6 +355,9 @@ def render_yield_curve(api_key: str | None = None) -> None:
         key="yc_spread_chart",
     )
     st.caption(f"{spread_name} = {long_} yield minus {short} yield, in basis points.")
+    render_indicator_panels(
+        spreads[spread_name], spread_lb, scale=1.0, unit="bp", key="yc_spread_ind"
+    )
     st.dataframe(
         changes(spreads, scale=1.0),
         width="stretch",

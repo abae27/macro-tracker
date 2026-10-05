@@ -279,6 +279,73 @@ def test_ema_does_not_interpolate_across_a_missing_day():
     assert out.iloc[3] == pytest.approx(((1 * (1 / 3) + 2 * (2 / 3)) * (1 / 3)) + 3 * (2 / 3))
 
 
+# ------------------------------------------------------------- RSI / MACD / z-score
+
+
+def bdays(n: int) -> pd.DatetimeIndex:
+    return pd.date_range("2026-01-05", periods=n, freq="B")
+
+
+def test_rsi_matches_hand_calculation_with_wilder_smoothing():
+    # period 2, alpha 0.5: avg gain 0.5 -> 0.75, avg loss 0.5 -> 0.25, so RSI = 50 then 75
+    out = t.rsi(pd.Series([1.0, 2.0, 1.0, 2.0], index=bdays(4)), 2)
+    assert out.iloc[:2].isna().all()
+    assert out.iloc[2] == pytest.approx(50.0) and out.iloc[3] == pytest.approx(75.0)
+
+
+def test_rsi_extremes_and_bounds():
+    rising = pd.Series(np.arange(40.0), index=bdays(40))
+    assert t.rsi(rising, 14).dropna().eq(100.0).all()
+    assert t.rsi(-rising, 14).dropna().eq(0.0).all()
+    noisy = pd.Series(np.random.default_rng(0).normal(size=300).cumsum(), index=bdays(300))
+    r = t.rsi(noisy).dropna()
+    assert r.between(0, 100).all()
+
+
+def test_rsi_average_waits_for_a_full_window():
+    r = pd.Series(np.linspace(40, 60, 30), index=bdays(30))
+    avg = t.rsi_average(r, 20)
+    assert avg.iloc[:19].isna().all() and avg.iloc[19] == pytest.approx(r.iloc[:20].mean())
+
+
+def test_macd_matches_hand_calculation():
+    out = t.macd(pd.Series([1.0, 2.0, 3.0, 4.0], index=bdays(4)), fast=2, slow=3, signal=2)
+    assert out["MACD"].iloc[:2].isna().all()
+    assert out["MACD"].iloc[2] == pytest.approx(0.305556, abs=1e-5)
+    assert out["MACD"].iloc[3] == pytest.approx(0.393519, abs=1e-5)
+    assert np.isnan(out["Signal"].iloc[2]) and out["Signal"].iloc[3] == pytest.approx(0.364198, abs=1e-5)
+    assert out["Histogram"].iloc[3] == pytest.approx(0.393519 - 0.364198, abs=1e-5)
+
+
+def test_macd_scale_converts_percent_to_bp_and_flat_series_is_zero():
+    s = pd.Series([1.0, 2.0, 3.0, 4.0], index=bdays(4))
+    base = t.macd(s, 2, 3, 2)["MACD"]
+    assert t.macd(s, 2, 3, 2, scale=100.0)["MACD"].iloc[3] == pytest.approx(base.iloc[3] * 100)
+    flat = t.macd(pd.Series(4.0, index=bdays(60)))
+    assert flat["MACD"].dropna().abs().max() == pytest.approx(0.0)
+
+
+def test_zscore_matches_hand_calculation_and_waits_for_a_full_window():
+    out = t.zscore(pd.Series([1.0, 2.0, 3.0, 4.0, 5.0], index=bdays(5)), 3)
+    assert out.iloc[:2].isna().all()
+    assert out.iloc[2:].tolist() == pytest.approx([1.0, 1.0, 1.0])  # mean 2, sample std 1, etc.
+
+
+def test_zscore_is_nan_when_there_is_no_variation_not_inf():
+    out = t.zscore(pd.Series(4.0, index=bdays(10)), 5)
+    assert out.isna().all()
+
+
+def test_indicators_do_not_fill_missing_tenor_history_or_gaps():
+    idx = bdays(40)
+    s = pd.Series(np.r_[[np.nan] * 10, np.linspace(3, 4, 30)], index=idx)
+    for out in (t.rsi(s, 5), t.macd(s, 3, 5, 3)["MACD"], t.zscore(s, 5)):
+        assert out.index.equals(idx)
+        assert out.iloc[:10].isna().all()  # tenor did not exist yet: stays NaN
+    gap = pd.Series([1.0, 2.0, np.nan, 3.0, 4.0, 5.0], index=bdays(6))
+    assert np.isnan(t.zscore(gap, 3).iloc[2])  # the missing day itself is not invented
+
+
 # ------------------------------------------------------------ loading and fallback
 
 

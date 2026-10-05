@@ -346,6 +346,65 @@ def ema(series: pd.Series, window: int) -> pd.Series:
     return smoothed.reindex(series.index)
 
 
+RSI_PERIOD = 14
+RSI_AVG_WINDOW = 20
+MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+Z_WINDOWS = (63, 126, 252)
+
+
+def rsi(series: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
+    """Relative Strength Index (0-100) with Wilder smoothing, over trading days.
+
+    Changes are measured between consecutive real prints; NaNs are skipped, not filled.
+    NaN until `period` changes exist. A run of only up-moves gives 100, only down-moves 0.
+    """
+    s = series.dropna()
+    delta = s.diff()
+    avg_gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = (-delta).clip(lower=0).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    out = 100 - 100 / (1 + avg_gain / avg_loss)
+    return out.reindex(series.index)
+
+
+def rsi_average(rsi_series: pd.Series, window: int = RSI_AVG_WINDOW) -> pd.Series:
+    """Simple moving average of the RSI over `window` observations."""
+    r = rsi_series.dropna()
+    return r.rolling(window, min_periods=window).mean().reindex(rsi_series.index)
+
+
+def macd(
+    series: pd.Series,
+    fast: int = MACD_FAST,
+    slow: int = MACD_SLOW,
+    signal: int = MACD_SIGNAL,
+    scale: float = 1.0,
+) -> pd.DataFrame:
+    """MACD line (fast EMA - slow EMA), signal line (EMA of MACD) and histogram.
+
+    `scale` converts units (100 turns a percent yield into bp). Each piece stays NaN
+    until it has a full window of real observations.
+    """
+    s = series.dropna()
+    fast_ema = s.ewm(span=fast, adjust=False, min_periods=fast).mean()
+    slow_ema = s.ewm(span=slow, adjust=False, min_periods=slow).mean()
+    line = (fast_ema - slow_ema) * scale
+    sig = line.dropna().ewm(span=signal, adjust=False, min_periods=signal).mean().reindex(line.index)
+    out = pd.DataFrame({"MACD": line, "Signal": sig, "Histogram": line - sig})
+    return out.reindex(series.index)
+
+
+def zscore(series: pd.Series, window: int) -> pd.Series:
+    """Rolling z-score: (x - rolling mean) / rolling sample std over `window` observations.
+
+    NaN until a full window exists, and NaN (not inf) when the window has no variation.
+    """
+    s = series.dropna()
+    mean = s.rolling(window, min_periods=window).mean()
+    std = s.rolling(window, min_periods=window).std()
+    z = ((s - mean) / std).replace([float("inf"), float("-inf")], float("nan"))
+    return z.reindex(series.index)
+
+
 def slice_lookback(data: pd.DataFrame | pd.Series, lookback: str):
     """1Y / 3Y / 5Y / Max, measured back from the latest observation."""
     if lookback == "Max" or len(data) == 0:
