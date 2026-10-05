@@ -246,6 +246,39 @@ def test_spread_changes_in_bp(curve):
     assert out.loc["5s30s", "1D"] == pytest.approx(75.0 - 90.0)
 
 
+# ------------------------------------------------------------------------- EMA
+
+
+def test_ema_matches_hand_calculation_and_waits_for_a_full_window():
+    s = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.date_range("2026-01-05", periods=4, freq="B"))
+    out = t.ema(s, 3)  # alpha = 2 / (3 + 1) = 0.5: 1.0, 1.5, 2.25, 3.125
+    assert out.iloc[:2].isna().all()  # fewer than 3 observations: no line yet
+    assert out.iloc[2] == pytest.approx(2.25) and out.iloc[3] == pytest.approx(3.125)
+
+
+def test_ema_of_a_constant_is_that_constant():
+    s = pd.Series(4.0, index=pd.date_range("2026-01-05", periods=50, freq="B"))
+    assert t.ema(s, 20).dropna().eq(4.0).all()
+
+
+def test_ema_does_not_fill_a_tenor_that_did_not_exist_yet():
+    idx = pd.date_range("2026-01-05", periods=8, freq="B")
+    s = pd.Series([np.nan, np.nan, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0], index=idx)
+    out = t.ema(s, 3)
+    assert out.iloc[:2].isna().all()           # before the tenor existed
+    assert np.isnan(out.iloc[2]) and np.isnan(out.iloc[3])  # window starts at first real print
+    assert out.iloc[4] == pytest.approx(2.25)  # 1.0, 1.5, 2.25 from the 3rd real print on
+    assert out.index.equals(s.index)
+
+
+def test_ema_does_not_interpolate_across_a_missing_day():
+    idx = pd.date_range("2026-01-05", periods=5, freq="B")
+    s = pd.Series([1.0, 2.0, np.nan, 3.0, 4.0], index=idx)
+    out = t.ema(s, 2)  # alpha = 2/3 over the 4 real prints only
+    assert np.isnan(out.iloc[2])
+    assert out.iloc[3] == pytest.approx(((1 * (1 / 3) + 2 * (2 / 3)) * (1 / 3)) + 3 * (2 / 3))
+
+
 # ------------------------------------------------------------ loading and fallback
 
 

@@ -330,6 +330,22 @@ def compute_spreads(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+EMA_WINDOWS = (20, 50, 100, 200)
+
+
+def ema(series: pd.Series, window: int) -> pd.Series:
+    """Exponential moving average over `window` observations (trading days).
+
+    Standard span convention, alpha = 2 / (window + 1). Computed on the real
+    observations only (NaNs are skipped, never filled), and left NaN until `window`
+    observations exist, so there is no half-formed line at the start. Dates with no
+    print (a tenor that did not exist yet) stay NaN.
+    """
+    values = series.dropna()
+    smoothed = values.ewm(span=window, adjust=False, min_periods=window).mean()
+    return smoothed.reindex(series.index)
+
+
 def slice_lookback(data: pd.DataFrame | pd.Series, lookback: str):
     """1Y / 3Y / 5Y / Max, measured back from the latest observation."""
     if lookback == "Max" or len(data) == 0:

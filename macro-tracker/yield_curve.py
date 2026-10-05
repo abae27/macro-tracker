@@ -12,7 +12,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from treasury import (
+    EMA_WINDOWS,
     HORIZONS,
+    ema,
     SPREADS,
     changes,
     clear_curve_cache,
@@ -32,7 +34,9 @@ COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
 
 # Kept in the data and tables, but not drawn on the curve chart.
 CHART_HIDDEN_TENORS = ["1M"]
-AXIS_TENORS = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
+EMA_COLORS = {20: "#f2c200", 50: "#fb8c1a", 100: "#2e9e4f", 200: "#d73027"}  # yellow/orange/green/red
+EMA_OPTIONS = [f"{n}D" for n in EMA_WINDOWS]
+AXIS_TENORS =["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
 COMPARE_PRESETS =["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
 DEFAULT_COMPARE = ["1D", "1W", "1M", "1Y"]
 CUSTOM_UNITS = {"Days": "D", "Weeks": "W", "Months": "M", "Years": "Y"}
@@ -113,8 +117,14 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
     return _base_layout(fig, 480).update_layout(hovermode="closest")
 
 
-def series_figure(series: pd.Series, name: str, unit: str) -> go.Figure:
-    """Time series of one tenor (unit '%') or spread (unit 'bp'); gaps stay gaps."""
+def series_figure(
+    series: pd.Series, name: str, unit: str, emas: dict[int, pd.Series] | None = None
+) -> go.Figure:
+    """Time series of one tenor (unit '%') or spread (unit 'bp'); gaps stay gaps.
+
+    `emas` maps window -> already-computed EMA series, drawn over the main line.
+    """
+    suffix = " bp" if unit == "bp" else "%"
     fig = go.Figure(
         go.Scatter(
             x=series.index,
@@ -123,13 +133,45 @@ def series_figure(series: pd.Series, name: str, unit: str) -> go.Figure:
             name=name,
             line=dict(color="#1e6fd9", width=2),
             connectgaps=False,
-            hovertemplate="%{y:.2f}" + (" bp" if unit == "bp" else "%") + "<extra></extra>",
+            hovertemplate="%{y:.2f}" + suffix + "<extra>" + name + "</extra>",
         )
     )
+    for window, line in (emas or {}).items():
+        fig.add_trace(
+            go.Scatter(
+                x=line.index,
+                y=line.values,
+                mode="lines",
+                name=f"{window}D EMA",
+                line=dict(color=EMA_COLORS[window], width=1.5),
+                connectgaps=False,
+                hovertemplate="%{y:.2f}" + suffix + f"<extra>{window}D EMA</extra>",
+            )
+        )
     if unit == "bp":
         fig.add_hline(y=0, line=dict(color=INK, width=1, dash="dot"))
     fig.update_yaxes(title="Spread (bp)" if unit == "bp" else "Yield (%)")
-    return _base_layout(fig, 380, showlegend=False)
+    return _base_layout(fig, 380, showlegend=bool(emas))
+
+
+def selected_emas(full: pd.Series, windows: list[str], lookback: str) -> dict[int, pd.Series]:
+    """EMAs computed on the full history, then cropped to the chart's lookback."""
+    out = {}
+    for label in windows:
+        n = int(label.rstrip("D"))
+        out[n] = slice_lookback(ema(full, n), lookback)
+    return out
+
+
+def ema_picker(container, key: str) -> list[str]:
+    """Multiselect of the moving averages to overlay; deselect any to hide it."""
+    return container.multiselect(
+        "Moving averages (EMA)",
+        EMA_OPTIONS,
+        default=EMA_OPTIONS,
+        key=key,
+        help="Exponential moving averages over trading days. Deselect any to hide it.",
+    )
 
 
 # ------------------------------------------------------------------------ the page
@@ -172,8 +214,13 @@ def render_yield_curve(api_key: str | None = None) -> None:
     tenor = t1.selectbox("Tenor", list(df.columns), index=list(df.columns).index("10Y")
                          if "10Y" in df.columns else 0, key="yc_tenor")
     tenor_lb = t2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_tenor_lb")
+    tenor_emas = ema_picker(st, "yc_tenor_ema")
     tseries = slice_lookback(df[tenor], tenor_lb)
-    st.plotly_chart(series_figure(tseries, tenor, "%"), width="stretch", key="yc_tenor_chart")
+    st.plotly_chart(
+        series_figure(tseries, tenor, "%", selected_emas(df[tenor], tenor_emas, tenor_lb)),
+        width="stretch",
+        key="yc_tenor_chart",
+    )
     if tseries.isna().any():
         first = df[tenor].first_valid_index()
         st.caption(f"{tenor} has no data before {first:%Y-%m-%d} (the tenor did not exist yet).")
@@ -184,10 +231,15 @@ def render_yield_curve(api_key: str | None = None) -> None:
     s1, s2 = st.columns([1, 3])
     spread_name = s1.selectbox("Spread", list(SPREADS), key="yc_spread")
     spread_lb = s2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_spread_lb")
+    spread_emas = ema_picker(st, "yc_spread_ema")
     series = slice_lookback(spreads[spread_name], spread_lb)
     short, long_ = SPREADS[spread_name]
     st.plotly_chart(
-        series_figure(series, spread_name, "bp"), width="stretch", key="yc_spread_chart"
+        series_figure(
+            series, spread_name, "bp", selected_emas(spreads[spread_name], spread_emas, spread_lb)
+        ),
+        width="stretch",
+        key="yc_spread_chart",
     )
     st.caption(f"{spread_name} = {long_} yield minus {short} yield, in basis points.")
     st.dataframe(
