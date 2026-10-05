@@ -50,11 +50,11 @@ FRED_SERIES = {
 }
 
 # name -> (short leg, long leg); spread = long - short, in bp
-SPREADS = {
-    "2s10s": ("2Y", "10Y"),
-    "5s30s": ("5Y", "30Y"),
+SPREADS = {  # display order
     "3M10Y": ("3M", "10Y"),
     "2s5s": ("2Y", "5Y"),
+    "2s10s": ("2Y", "10Y"),
+    "5s30s": ("5Y", "30Y"),
     "10s30s": ("10Y", "30Y"),
 }
 
@@ -229,13 +229,14 @@ def load_yield_curve(years: int = 5, api_key: str | None = None) -> CurveData:
     """
     start_year = date.today().year - years
     try:
-        return CurveData(_cached_treasury(start_year), SOURCE_TREASURY, False, None)
+        # drop_excluded again here so a stale cached frame can never show an excluded tenor
+        return CurveData(drop_excluded(_cached_treasury(start_year)), SOURCE_TREASURY, False, None)
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"
 
     if api_key:
         try:
-            return CurveData(_cached_fred(api_key, start_year), SOURCE_FRED, True, reason)
+            return CurveData(drop_excluded(_cached_fred(api_key, start_year)), SOURCE_FRED, True, reason)
         except Exception as exc:  # message omitted: FRED errors can echo the request URL
             reason += f"; FRED fallback also failed ({type(exc).__name__})"
     return CurveData(pd.DataFrame(), "unavailable", True, reason)

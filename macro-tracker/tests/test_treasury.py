@@ -222,7 +222,7 @@ def test_spreads_are_long_minus_short_in_bp(curve):
     assert last["3M10Y"] == pytest.approx(20.0)    # 4.30 - 4.10
     assert last["2s5s"] == pytest.approx(15.0)     # 3.85 - 3.70
     assert last["10s30s"] == pytest.approx(30.0)   # 4.60 - 4.30
-    assert list(s.columns) == list(t.SPREADS)
+    assert list(s.columns) == ["3M10Y", "2s5s", "2s10s", "5s30s", "10s30s"]
 
 
 def test_spread_is_nan_when_a_leg_is_missing(curve):
@@ -279,6 +279,13 @@ def test_load_falls_back_to_fred_and_reports_why(monkeypatch):
     data = t.load_yield_curve(5, api_key="dummy")
     assert data.fallback and data.source == t.SOURCE_FRED
     assert "ConnectTimeout" in data.error and data.as_of == ts("2026-01-05")
+
+
+def test_load_strips_excluded_tenor_even_from_a_stale_cached_frame(monkeypatch):
+    stale = pd.DataFrame({"1M": [4.0], "1.5M": [4.1], "2M": [4.2]}, index=pd.to_datetime(["2026-01-05"]))
+    monkeypatch.setattr(t, "_cached_treasury", lambda year: stale)
+    data = t.load_yield_curve(5)
+    assert list(data.df.columns) == ["1M", "2M"] and not data.fallback
 
 
 def test_load_never_raises_when_everything_fails(monkeypatch):
