@@ -610,7 +610,7 @@ def main() -> None:
         )
         st.stop()
 
-    tab_cpi, tab_rates, tab_explorer = st.tabs(["US CPI", "Rates", "Series Explorer"])
+    tab_rates, tab_cpi, tab_explorer = st.tabs(["Rates", "US CPI", "Series Explorer"])
     with tab_cpi:
         tab_nowcast, tab_levels = st.tabs(["CPI Nowcast Beat/Miss", "CPI Index Level 3"])
         with tab_nowcast:
