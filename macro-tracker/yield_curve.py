@@ -34,7 +34,7 @@ COMPARE_DASHES = ["solid", "dash", "dot", "dashdot"]
 
 # Kept in the data and tables, but not drawn on the curve chart.
 CHART_HIDDEN_TENORS = ["1M"]
-EMA_COLORS = {20: "#f2c200", 50: "#fb8c1a", 100: "#2e9e4f", 200: "#d73027"}  # yellow/orange/green/red
+EMA_COLORS = {20: "#8e44ad", 50: "#fb8c1a", 100: "#2e9e4f", 200: "#d73027"}  # purple/orange/green/red
 EMA_OPTIONS = [f"{n}D" for n in EMA_WINDOWS]
 AXIS_TENORS =["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
 COMPARE_PRESETS =["1D", "1W", "2W", "1M", "2M", "3M", "6M", "YTD", "1Y", "2Y", "5Y"]
