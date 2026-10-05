@@ -131,9 +131,16 @@ def curve_figure(df: pd.DataFrame, log_x: bool = False, horizons: list[str] | No
     return _base_layout(fig, 480).update_layout(hovermode="closest")
 
 
+# Colors follow the bond-market reading of a yield chart: a bearish divergence in the yield
+# (higher high, weaker RSI) points to falling yields, so it is green; a bullish one points to
+# rising yields, so it is red.
 DIVERGENCE_STYLE = {
-    "bullish": dict(symbol="triangle-up", color="#2e9e4f", label="Bullish divergence"),
-    "bearish": dict(symbol="triangle-down", color="#d73027", label="Bearish divergence"),
+    "bullish": dict(
+        symbol="triangle-up", color="#d73027", label="Bullish divergence (lower low, higher RSI low)"
+    ),
+    "bearish": dict(
+        symbol="triangle-down", color="#2e9e4f", label="Bearish divergence (higher high, lower RSI high)"
+    ),
 }
 
 
@@ -348,12 +355,13 @@ def render_indicator_panels(
 def divergence_picker(container, key: str) -> bool:
     """Checkbox for the RSI divergence triangles on the chart and the RSI panel."""
     return container.checkbox(
-        "Show RSI divergences  (green ▲ bullish, red ▼ bearish)",
+        "Show RSI divergences  (red ▲ bullish, green ▼ bearish)",
         value=True,
         key=key,
         help=(
-            "Bearish: the series makes a higher swing high while RSI makes a lower high. "
-            "Bullish: a lower swing low while RSI makes a higher low. Swings are the extreme of "
+            "Bearish (green ▼): the series makes a higher swing high while RSI makes a lower "
+            "high, i.e. fading upside momentum in yields. Bullish (red ▲): a lower swing low "
+            "while RSI makes a higher low. Swings are the extreme of "
             f"{PIVOT_WINDOW} trading days either side, so the newest {PIVOT_WINDOW} days cannot "
             "show a signal yet. Applied to the yield/spread itself, not to bond prices."
         ),
