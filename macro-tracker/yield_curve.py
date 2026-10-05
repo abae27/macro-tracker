@@ -166,7 +166,37 @@ def render_yield_curve(api_key: str | None = None) -> None:
             "instead; FRED lags Treasury.gov by about a day and has fewer tenors."
         )
 
-    # 1. latest curve vs history
+    # 1. any tenor
+    st.subheader("Tenor history")
+    t1, t2 = st.columns([1, 3])
+    tenor = t1.selectbox("Tenor", list(df.columns), index=list(df.columns).index("10Y")
+                         if "10Y" in df.columns else 0, key="yc_tenor")
+    tenor_lb = t2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_tenor_lb")
+    tseries = slice_lookback(df[tenor], tenor_lb)
+    st.plotly_chart(series_figure(tseries, tenor, "%"), width="stretch", key="yc_tenor_chart")
+    if tseries.isna().any():
+        first = df[tenor].first_valid_index()
+        st.caption(f"{tenor} has no data before {first:%Y-%m-%d} (the tenor did not exist yet).")
+
+    # 2. spreads: chart first, then the table
+    st.subheader("Spreads")
+    spreads = compute_spreads(df)
+    s1, s2 = st.columns([1, 3])
+    spread_name = s1.selectbox("Spread", list(SPREADS), key="yc_spread")
+    spread_lb = s2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_spread_lb")
+    series = slice_lookback(spreads[spread_name], spread_lb)
+    short, long_ = SPREADS[spread_name]
+    st.plotly_chart(
+        series_figure(series, spread_name, "bp"), width="stretch", key="yc_spread_chart"
+    )
+    st.caption(f"{spread_name} = {long_} yield minus {short} yield, in basis points.")
+    st.dataframe(
+        changes(spreads, scale=1.0),
+        width="stretch",
+        column_config=_change_config("Latest (bp)"),
+    )
+
+    # 3. latest curve vs history, then the table of all tenors
     st.subheader("Yield curve")
     p1, p2, p3 = st.columns([4, 1, 1])
     picked = p1.multiselect(
@@ -201,44 +231,12 @@ def render_yield_curve(api_key: str | None = None) -> None:
     if not horizons:
         st.caption("Select one or more comparison dates above to overlay earlier curves.")
 
-    # 2. all tenors
     st.subheader("All tenors")
-    table = changes(df)
     st.dataframe(
-        table, width="stretch", column_config=_change_config("Latest (%)"),
+        changes(df), width="stretch", column_config=_change_config("Latest (%)"),
     )
     st.caption(
         "Levels in percent, changes in basis points. Each change compares with the last "
         "observation on or before the reference date (1D = previous trading day, YTD = last "
         "print of the prior year). Blank = that tenor had no print then."
     )
-
-    # 3. spreads
-    st.subheader("Spreads")
-    spreads = compute_spreads(df)
-    st.dataframe(
-        changes(spreads, scale=1.0),
-        width="stretch",
-        column_config=_change_config("Latest (bp)"),
-    )
-    s1, s2 = st.columns([1, 3])
-    spread_name = s1.selectbox("Spread", list(SPREADS), key="yc_spread")
-    spread_lb = s2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_spread_lb")
-    series = slice_lookback(spreads[spread_name], spread_lb)
-    short, long_ = SPREADS[spread_name]
-    st.plotly_chart(
-        series_figure(series, spread_name, "bp"), width="stretch", key="yc_spread_chart"
-    )
-    st.caption(f"{spread_name} = {long_} yield minus {short} yield, in basis points.")
-
-    # 4. any tenor
-    st.subheader("Tenor history")
-    t1, t2 = st.columns([1, 3])
-    tenor = t1.selectbox("Tenor", list(df.columns), index=list(df.columns).index("10Y")
-                         if "10Y" in df.columns else 0, key="yc_tenor")
-    tenor_lb = t2.radio("Lookback", LOOKBACKS, index=2, horizontal=True, key="yc_tenor_lb")
-    tseries = slice_lookback(df[tenor], tenor_lb)
-    st.plotly_chart(series_figure(tseries, tenor, "%"), width="stretch", key="yc_tenor_chart")
-    if tseries.isna().any():
-        first = df[tenor].first_valid_index()
-        st.caption(f"{tenor} has no data before {first:%Y-%m-%d} (the tenor did not exist yet).")
